@@ -32,7 +32,8 @@ import {
   getSchoolCode,
   setSchoolCode,
   initServerSyncEngine,
-  bootstrapSchoolToServer
+  bootstrapSchoolToServer,
+  ensureRegisteredSchoolLoaded
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -80,7 +81,8 @@ import {
   Sparkles,
   HelpCircle,
   Download,
-  Upload
+  Upload,
+  School
 } from "lucide-react";
 
 function getInitialMode(): "teacher" | "admin" | "stats-only" | "super-admin" | "morning-delay" {
@@ -494,6 +496,7 @@ export default function App() {
                 };
                 setActiveUser(fallback);
                 setCurrentUser(fallback);
+                ensureRegisteredSchoolLoaded().catch(() => {});
               }
             }
           }
@@ -587,12 +590,17 @@ export default function App() {
     setTeachers(localTeachers);
     setStudents(localStudents);
 
-    // Check cached school name strictly scoped to current user email/uid
+    // Check cached school name strictly scoped to current user email/uid, or registered school name
     const userEmail = currentUser?.email?.toLowerCase().trim();
     const userUid = currentUser?.uid;
     const cachedName = (userEmail ? localStorage.getItem(`school_name_${userEmail}`) : null) || 
-      (userUid ? localStorage.getItem(`school_name_${userUid}`) : null);
-    setSchoolName(cachedName || "");
+      (userUid ? localStorage.getItem(`school_name_${userUid}`) : null) ||
+      localStorage.getItem("school_name_cache") ||
+      localStorage.getItem("school_name_cached");
+    if (cachedName) setSchoolName(cachedName);
+
+    // Proactively pull registered school data if guest or on mount
+    ensureRegisteredSchoolLoaded().catch(() => {});
 
     // Only activate loading if there is zero cached data
     if (localGrades.length === 0 && localClasses.length === 0 && !cachedName) {
@@ -2039,19 +2047,24 @@ export default function App() {
 
         {/* Dynamic Inner Portal Content */}
         <main className="flex-1 w-full max-w-full min-w-0 px-2.5 sm:px-4 md:px-6 py-3 sm:py-4 pb-28 md:pb-8 space-y-3 sm:space-y-4">
-          {/* Registration Mandatory Notice Banner */}
+          {/* Registration / Live School View Status Banner */}
           {!isDirectKiosk && (!currentUser || currentUser?.isGuest) && (
-            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4 border border-indigo-700/50 animate-in fade-in">
+            <div className="bg-emerald-50/90 border border-emerald-200 text-emerald-950 rounded-2xl p-3.5 sm:p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in">
               <div className="flex items-center gap-3 text-right w-full sm:w-auto">
-                <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30 flex-shrink-0">
-                  <CloudOff className="w-5 h-5" />
+                <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-sm flex-shrink-0">
+                  <School className="w-5 h-5" />
                 </div>
                 <div>
-                  <p className="text-xs sm:text-sm font-black text-white">
-                    🔒 التسجيل بحساب Google إلزامي لعرض وإدارة البيانات
-                  </p>
-                  <p className="text-[11px] text-slate-300 font-medium mt-0.5">
-                    تم إلغاء التخزين المحلي للبيانات لغير المسجلين لحماية الخصوصية. لعرض وإدارة صفوف وفصول وطلاب مدرستك ورصد الغياب والتأخر، سجّل دخولك بحساب Google.
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-xs sm:text-sm font-black text-emerald-900">
+                      معاينة مباشرة: {schoolName || "المدرسة المسجلة"}
+                    </p>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      نشط ومتاح
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-700/90 font-medium mt-0.5">
+                    يتم عرض بيانات وسجلات المدرسة المسجلة مباشرة. لتعديل السجلات وحفظها سحابياً، سجّل دخولك بحساب Google.
                   </p>
                 </div>
               </div>
@@ -2060,15 +2073,15 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleGoogleLogin}
-                  className="w-full sm:w-auto py-2.5 px-5 bg-white hover:bg-slate-100 text-slate-900 font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                  className="w-full sm:w-auto py-2 px-4 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path
-                      fill="#EA4335"
+                      fill="currentColor"
                       d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
                     />
                   </svg>
-                  <span>تسجيل الدخول باستخدام Google لعرض البيانات</span>
+                  <span>تسجيل الدخول بحساب Google</span>
                 </button>
               </div>
             </div>

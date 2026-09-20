@@ -316,37 +316,41 @@ export function getSchoolCode(): string {
       const hashIndex = window.location.hash.indexOf("?");
       const hashParams = hashIndex !== -1 ? new URLSearchParams(window.location.hash.substring(hashIndex)) : null;
       const urlCode = (searchParams.get("schoolCode") || searchParams.get("code") || searchParams.get("schoolId") || hashParams?.get("schoolCode") || hashParams?.get("code") || hashParams?.get("schoolId") || "").trim();
-      if (urlCode) return urlCode;
+      if (urlCode && !urlCode.startsWith("guest")) return urlCode;
     } catch (_) {}
 
-    // 2. Check explicitly linked school owner ID
-    const linked = localStorage.getItem("linked_school_owner_id");
-    if (linked && linked.trim()) return linked.trim();
+    // 2. Check registered school code cached in localStorage
+    const regCode = localStorage.getItem("registered_school_code");
+    if (regCode && regCode.trim() && !regCode.startsWith("guest")) return regCode.trim();
 
-    // 3. Check custom school code
+    // 3. Check explicitly linked school owner ID
+    const linked = localStorage.getItem("linked_school_owner_id");
+    if (linked && linked.trim() && !linked.startsWith("guest")) return linked.trim();
+
+    // 4. Check custom school code
     const custom = localStorage.getItem("school_unique_code");
-    if (custom && custom.trim()) return custom.trim();
+    if (custom && custom.trim() && !custom.startsWith("guest")) return custom.trim();
   }
 
-  // 4. Authenticated Google Email
+  // 5. Authenticated Google Email
   const eff = getEffectiveUidAndEmail();
-  if (eff.email && !eff.email.endsWith("@school.com")) {
+  if (eff.email && !eff.email.endsWith("@school.com") && !eff.email.endsWith("@school.local") && !eff.isGuest) {
     return eff.email;
   }
-  // 5. Authenticated UID
-  if (eff.uid && eff.uid !== "school_admin") {
+  // 6. Authenticated UID
+  if (eff.uid && eff.uid !== "school_admin" && !eff.uid.startsWith("guest") && !eff.isGuest) {
     return eff.uid;
   }
 
-  // 6. Local admin credentials
+  // 7. Local admin credentials
   if (typeof window !== "undefined") {
     const ownEmail = (localStorage.getItem("own_school_admin_email") || "").trim();
-    if (ownEmail && !ownEmail.endsWith("@school.com")) return ownEmail;
+    if (ownEmail && !ownEmail.endsWith("@school.com") && !ownEmail.endsWith("@school.local") && !ownEmail.startsWith("guest")) return ownEmail;
     const ownId = (localStorage.getItem("own_school_admin_id") || "").trim();
-    if (ownId) return ownId;
+    if (ownId && !ownId.startsWith("guest") && ownId !== "school_admin") return ownId;
   }
 
-  return getOrCreateOwnSchoolAdminId();
+  return "";
 }
 
 export function setSchoolCode(code: string): void {
@@ -794,13 +798,18 @@ export function initServerSyncEngine(): void {
       const currentEff = getEffectiveUidAndEmail();
       const q = new URLSearchParams();
       if (code) q.set("schoolCode", code);
-      if (currentEff.email) q.set("email", currentEff.email);
-      if (currentEff.uid) q.set("uid", currentEff.uid);
+      if (currentEff.email && !currentEff.isGuest && !currentEff.email.includes("@school.local")) q.set("email", currentEff.email);
+      if (currentEff.uid && !currentEff.isGuest && !currentEff.uid.startsWith("guest")) q.set("uid", currentEff.uid);
 
       const res = await fetch(`/api/sync/all?${q.toString()}`);
       if (res.ok) {
         const json = await res.json();
         if (json.success) {
+          if (json.schoolCode && typeof window !== "undefined") {
+            localStorage.setItem("registered_school_code", json.schoolCode);
+            if (!code) setSchoolCode(json.schoolCode);
+          }
+
           // School Name Sync
           if (json.schoolName) {
             const curName = localStorage.getItem("school_name_cache");
@@ -885,6 +894,63 @@ export function initServerSyncEngine(): void {
   if (typeof window !== "undefined") {
     window.addEventListener("focus", () => pollServer());
   }
+}
+
+// Ensure registered school data is immediately available on startup or guest mode
+export async function ensureRegisteredSchoolLoaded(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    const code = getSchoolCode();
+    const currentEff = getEffectiveUidAndEmail();
+    const q = new URLSearchParams();
+    if (code) q.set("schoolCode", code);
+    if (currentEff.email && !currentEff.isGuest && !currentEff.email.includes("@school.local")) q.set("email", currentEff.email);
+    if (currentEff.uid && !currentEff.isGuest && !currentEff.uid.startsWith("guest")) q.set("uid", currentEff.uid);
+
+    const res = await fetch(`/api/sync/all?${q.toString()}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success) {
+        if (json.schoolCode) {
+          localStorage.setItem("registered_school_code", json.schoolCode);
+          if (!code) setSchoolCode(json.schoolCode);
+        }
+        if (json.schoolName) {
+          localStorage.setItem("school_name_cache", json.schoolName);
+          localStorage.setItem("school_name_cached", json.schoolName);
+          window.dispatchEvent(new CustomEvent("school_name_updated", { detail: json.schoolName }));
+        }
+        if (Array.isArray(json.grades) && json.grades.length > 0) {
+          setLocalItems(GRADES_COLL, json.grades, currentEff.uid);
+          notifyCollectionSubscribers(GRADES_COLL, json.grades);
+        }
+        if (Array.isArray(json.classes) && json.classes.length > 0) {
+          setLocalItems(CLASSES_COLL, json.classes, currentEff.uid);
+          notifyCollectionSubscribers(CLASSES_COLL, json.classes);
+        }
+        if (Array.isArray(json.teachers) && json.teachers.length > 0) {
+          setLocalItems(TEACHERS_COLL, json.teachers, currentEff.uid);
+          notifyCollectionSubscribers(TEACHERS_COLL, json.teachers);
+        }
+        if (Array.isArray(json.students) && json.students.length > 0) {
+          setLocalItems(STUDENTS_COLL, json.students, currentEff.uid);
+          notifyCollectionSubscribers(STUDENTS_COLL, json.students);
+        }
+        if (Array.isArray(json.attendance) && json.attendance.length > 0) {
+          setLocalItems(ATTENDANCE_COLL, json.attendance, currentEff.uid);
+          notifyCollectionSubscribers(ATTENDANCE_COLL, json.attendance);
+        }
+        if (Array.isArray(json.delays) && json.delays.length > 0) {
+          setLocalItems(MORNING_DELAYS_COLL, json.delays, currentEff.uid);
+          notifyCollectionSubscribers(MORNING_DELAYS_COLL, json.delays);
+        }
+        if (Array.isArray(json.behaviors) && json.behaviors.length > 0) {
+          setLocalItems(BEHAVIORS_COLL, json.behaviors, currentEff.uid);
+          notifyCollectionSubscribers(BEHAVIORS_COLL, json.behaviors);
+        }
+      }
+    }
+  } catch (_) {}
 }
 
 // Bootstrap entire school state to server sync store
@@ -987,12 +1053,41 @@ export function isDocBelongingToUser(data: any, currentUid?: string, currentEmai
   const targetUid = (currentUid || eff.uid || "").trim();
   const targetSchoolCode = getSchoolCode().trim();
 
-  // If no user context exists, no private user document should be accessible
-  if (!targetEmail && !targetUid && !targetSchoolCode) return false;
+  const isGuest = Boolean(
+    eff.isGuest ||
+    targetUid === "guest_school_admin" ||
+    targetUid.startsWith("guest") ||
+    targetEmail.endsWith("@school.local") ||
+    targetEmail.endsWith("@school.com")
+  );
 
   const docEmail = (data.userEmail || data.email || data.schoolEmail || data.ownerEmail || "").toLowerCase().trim();
   const docUid = (data.userId || data.uid || data.ownerId || data.owner || "").trim();
   const docSchoolCode = (data.schoolCode || data.school_code || "").trim();
+
+  // If the user is unauthenticated or in guest view mode:
+  // They should view the registered school's data!
+  if (isGuest) {
+    if (targetSchoolCode) {
+      const normTarget = targetSchoolCode.toLowerCase();
+      if (docSchoolCode && docSchoolCode.toLowerCase() === normTarget) return true;
+      if (docEmail && docEmail === normTarget) return true;
+      if (docUid && docUid.toLowerCase() === normTarget) return true;
+      if (!docSchoolCode && !docEmail) return true;
+    } else {
+      // If no specific school code specified yet, allow viewing the registered school data
+      if (docSchoolCode && typeof window !== "undefined") {
+        try {
+          localStorage.setItem("school_unique_code", docSchoolCode);
+          localStorage.setItem("registered_school_code", docSchoolCode);
+        } catch (_) {}
+      }
+      return true;
+    }
+  }
+
+  // If no user context exists, no private user document should be accessible
+  if (!targetEmail && !targetUid && !targetSchoolCode) return false;
 
   // 0. Primary Match on School Code (direct cross-device & independent link synchronization)
   if (targetSchoolCode) {
@@ -1795,8 +1890,8 @@ async function fetchAndFilterCollection(colName: string, force: boolean = false)
       const code = getSchoolCode();
       const q = new URLSearchParams();
       if (code) q.set("schoolCode", code);
-      if (currentEmail) q.set("email", currentEmail);
-      if (currentUid) q.set("uid", currentUid);
+      if (currentEmail && !eff.isGuest && !currentEmail.includes("@school.local")) q.set("email", currentEmail);
+      if (currentUid && !eff.isGuest && !currentUid.startsWith("guest")) q.set("uid", currentUid);
       
       const serverEndpoint = colName === ATTENDANCE_COLL ? "/api/sync/attendance" :
                              colName === BEHAVIORS_COLL ? "/api/sync/behaviors" :

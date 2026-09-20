@@ -80,22 +80,30 @@ function broadcastSyncEvent(type: string, data: any) {
 
 // Helper to check if an entity belongs to the requested school
 function matchesSchool(item: any, schoolCode?: string, email?: string, uid?: string): boolean {
-  if (!schoolCode && !email && !uid) return true;
+  if (!item) return false;
+
+  const isGuestEmail = !email || email.toLowerCase().includes("@school.local") || email.toLowerCase().includes("@school.com");
+  const isGuestUid = !uid || uid.toLowerCase().startsWith("guest");
+  
+  const cleanSchoolCode = (schoolCode || "").toLowerCase().trim();
+  const cleanEmail = isGuestEmail ? "" : (email || "").toLowerCase().trim();
+  const cleanUid = isGuestUid ? "" : (uid || "").trim();
+
+  // If no specific schoolCode, authenticated email, or authenticated uid, allow viewing the registered school data
+  if (!cleanSchoolCode && !cleanEmail && !cleanUid) return true;
+
   const sCode = (item.schoolCode || "").toLowerCase().trim();
   const sEmail = (item.userEmail || item.email || "").toLowerCase().trim();
   const sUid = (item.userId || item.uid || "").trim();
 
-  if (schoolCode) {
-    const sc = schoolCode.toLowerCase().trim();
-    if (sCode === sc || sEmail === sc || sUid === sc) return true;
+  if (cleanSchoolCode) {
+    if (sCode === cleanSchoolCode || sEmail === cleanSchoolCode || sUid === cleanSchoolCode) return true;
   }
-  if (email) {
-    const em = email.toLowerCase().trim();
-    if (sEmail === em || sCode === em) return true;
+  if (cleanEmail) {
+    if (sEmail === cleanEmail || sCode === cleanEmail) return true;
   }
-  if (uid) {
-    const u = uid.trim();
-    if (sUid === u || sCode === u) return true;
+  if (cleanUid) {
+    if (sUid === cleanUid || sCode === cleanUid) return true;
   }
   return false;
 }
@@ -154,18 +162,7 @@ app.get("/api/sync/attendance", (req, res) => {
     results = results.filter(r => r.date === date);
   }
 
-  if (schoolCode || email || uid) {
-    results = results.filter(r => {
-      const rCode = (r.schoolCode || "").toLowerCase().trim();
-      const rEmail = (r.userEmail || "").toLowerCase().trim();
-      const rUid = (r.userId || "").trim();
-
-      if (schoolCode && (rCode === schoolCode || rEmail === schoolCode || rUid === schoolCode)) return true;
-      if (email && (rEmail === email || rCode === email)) return true;
-      if (uid && (rUid === uid || rCode === uid)) return true;
-      return false;
-    });
-  }
+  results = results.filter(r => matchesSchool(r, schoolCode, email, uid));
 
   res.json({ success: true, records: results });
 });
@@ -205,19 +202,7 @@ app.get("/api/sync/behaviors", (req, res) => {
   const email = ((req.query.email as string) || "").toLowerCase().trim();
   const uid = ((req.query.uid as string) || "").trim();
 
-  let results = behaviorsCache;
-  if (schoolCode || email || uid) {
-    results = results.filter(r => {
-      const rCode = (r.schoolCode || "").toLowerCase().trim();
-      const rEmail = (r.userEmail || "").toLowerCase().trim();
-      const rUid = (r.userId || "").trim();
-      if (schoolCode && (rCode === schoolCode || rEmail === schoolCode || rUid === schoolCode)) return true;
-      if (email && (rEmail === email || rCode === email)) return true;
-      if (uid && (rUid === uid || rCode === uid)) return true;
-      return false;
-    });
-  }
-
+  const results = behaviorsCache.filter(r => matchesSchool(r, schoolCode, email, uid));
   res.json({ success: true, records: results });
 });
 
@@ -258,17 +243,7 @@ app.get("/api/sync/delays", (req, res) => {
   if (date) {
     results = results.filter(r => r.date === date);
   }
-  if (schoolCode || email || uid) {
-    results = results.filter(r => {
-      const rCode = (r.schoolCode || "").toLowerCase().trim();
-      const rEmail = (r.userEmail || "").toLowerCase().trim();
-      const rUid = (r.userId || "").trim();
-      if (schoolCode && (rCode === schoolCode || rEmail === schoolCode || rUid === schoolCode)) return true;
-      if (email && (rEmail === email || rCode === email)) return true;
-      if (uid && (rUid === uid || rCode === uid)) return true;
-      return false;
-    });
-  }
+  results = results.filter(r => matchesSchool(r, schoolCode, email, uid));
 
   res.json({ success: true, records: results });
 });
