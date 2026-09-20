@@ -1661,7 +1661,42 @@ export async function syncAllLocalDataToFirestore(): Promise<{ count: number; su
 
   try {
     for (const colName of collections) {
-      const items = getLocalItems(colName, uid);
+      const rawSources = [
+        getLocalItems(colName, uid),
+        getLocalItems(colName, email),
+        getLocalItems(colName, ""),
+        collectionHubs.get(colName)?.latestData || []
+      ];
+      const itemMap = new Map<string, any>();
+      rawSources.forEach(src => {
+        if (Array.isArray(src)) {
+          src.forEach(item => {
+            if (item && item.id && !itemMap.has(item.id)) {
+              itemMap.set(item.id, item);
+            }
+          });
+        }
+      });
+
+      let items = Array.from(itemMap.values());
+
+      // If empty for core collections, fallback to existing async getters
+      if (items.length === 0) {
+        if (colName === GRADES_COLL) {
+          const g = await getGrades();
+          if (Array.isArray(g)) items = g;
+        } else if (colName === CLASSES_COLL) {
+          const c = await getClasses();
+          if (Array.isArray(c)) items = c;
+        } else if (colName === TEACHERS_COLL) {
+          const t = await getTeachers();
+          if (Array.isArray(t)) items = t;
+        } else if (colName === STUDENTS_COLL) {
+          const s = await getStudents();
+          if (Array.isArray(s)) items = s;
+        }
+      }
+
       if (!Array.isArray(items) || items.length === 0) continue;
       
       const normalizedItems: any[] = [];
@@ -1861,16 +1896,47 @@ if (typeof window !== "undefined") {
   } catch (_) {}
 }
 
-// Execute Firestore write safely with non-blocking error handling
-async function safeFirestoreWrite(promise: Promise<any>, timeoutMs: number = 2500): Promise<void> {
+export type CloudSyncStatus = "connected" | "syncing" | "permission-denied" | "database-not-found" | "offline" | "checking";
+
+let currentCloudSyncStatus: CloudSyncStatus = "checking";
+let currentCloudSyncMessage: string = "";
+const syncStatusListeners = new Set<(status: CloudSyncStatus, message: string) => void>();
+
+export function getCloudSyncStatus(): { status: CloudSyncStatus; message: string } {
+  return { status: currentCloudSyncStatus, message: currentCloudSyncMessage };
+}
+
+export function setCloudSyncStatus(status: CloudSyncStatus, message: string = "") {
+  if (currentCloudSyncStatus === status && currentCloudSyncMessage === message) return;
+  currentCloudSyncStatus = status;
+  currentCloudSyncMessage = message;
+  syncStatusListeners.forEach(fn => {
+    try { fn(status, message); } catch (_) {}
+  });
+}
+
+export function subscribeToCloudSyncStatus(cb: (status: CloudSyncStatus, message: string) => void): () => void {
+  syncStatusListeners.add(cb);
+  try { cb(currentCloudSyncStatus, currentCloudSyncMessage); } catch (_) {}
+  return () => {
+    syncStatusListeners.delete(cb);
+  };
+}
+
+// Execute Firestore write safely with proper timeout and real-time status reporting
+async function safeFirestoreWrite(promise: Promise<any>, timeoutMs: number = 5000): Promise<void> {
   try {
     let timer: any;
     const timeoutPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, timeoutMs);
+      timer = setTimeout(() => {
+        console.warn(`Firestore write operation took longer than ${timeoutMs}ms.`);
+        resolve();
+      }, timeoutMs);
     });
 
-    // Always attach catch handler to underlying promise to avoid unhandled rejections
-    promise.catch((err) => {
+    promise.then(() => {
+      setCloudSyncStatus("connected", "المزامنة السحابية اللحظية متصلة ونشطة");
+    }).catch((err) => {
       handleFirestoreError(err);
     });
 
@@ -1887,8 +1953,17 @@ export function isQuotaExhausted(): boolean {
 
 export function handleFirestoreError(err: any) {
   if (!err) return;
-  // Non-blocking logger for diagnostic monitoring without disconnecting network
-  if (err?.code && err.code !== "permission-denied") {
+  const code = err?.code || "";
+  const msg = (err?.message || String(err)).toLowerCase();
+
+  if (code === "permission-denied" || msg.includes("permission-denied") || msg.includes("missing or insufficient permissions")) {
+    setCloudSyncStatus("permission-denied", "تم رفض الإذن (Permission Denied) في Firestore. قواعد الأمان تمنع المزامنة اللحظية مع موقع كلاودفلير.");
+    console.warn("⚠️ Firestore Permission Denied: Security rules in Firebase Console (apsent-02) are blocking real-time sync.");
+  } else if (code === "not-found" || msg.includes("does not exist") || msg.includes("not_found")) {
+    setCloudSyncStatus("database-not-found", "قاعدة بيانات Cloud Firestore غير موجودة في مشروع Firebase.");
+  } else if (msg.includes("offline") || code === "unavailable") {
+    setCloudSyncStatus("offline", "غير متصل بالسحابة أو انقطع الاتصال مؤقتاً.");
+  } else {
     console.debug("Firestore notification:", err?.message || err);
   }
 }
@@ -2319,7 +2394,7 @@ export async function deleteAttendanceRecord(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItemsBy(ATTENDANCE_COLL, (r) => r.id === id || r._docId === id || r._origId === id, eff.uid);
   try {
-    await safeFirestoreWrite(deleteDoc(doc(db, ATTENDANCE_COLL, id)), 200);
+    await safeFirestoreWrite(deleteDoc(doc(db, ATTENDANCE_COLL, id)), 5000);
   } catch (_) {}
 }
 
@@ -2414,7 +2489,7 @@ export async function deleteAttendanceEntry(recordId: string, studentId: string,
   // 2. Persist to Firestore
   if (updatedRecord) {
     const docRef = doc(db, ATTENDANCE_COLL, recordId);
-    await safeFirestoreWrite(setDoc(docRef, updatedRecord, { merge: true }), 200);
+    await safeFirestoreWrite(setDoc(docRef, updatedRecord, { merge: true }), 5000);
   }
 }
 
@@ -2493,7 +2568,7 @@ export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "ti
 
   // 3. Firestore write
   const docRef = doc(db, BEHAVIORS_COLL, newId);
-  await safeFirestoreWrite(setDoc(docRef, fullRecord, { merge: true }), 2500);
+  await safeFirestoreWrite(setDoc(docRef, fullRecord, { merge: true }), 5000);
 
   return newId;
 }
@@ -2502,7 +2577,7 @@ export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "ti
 export async function deleteBehaviorRecord(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItemsBy(BEHAVIORS_COLL, (r) => r.id === id || r._docId === id || r._origId === id, eff.uid);
-  await safeFirestoreWrite(deleteDoc(doc(db, BEHAVIORS_COLL, id)), 200);
+  await safeFirestoreWrite(deleteDoc(doc(db, BEHAVIORS_COLL, id)), 5000);
 }
 
 // --- MORNING DELAY (التأخر الصباحي) ---
@@ -2804,7 +2879,7 @@ export async function addGrade(name: string): Promise<string> {
 
   // 2. Persist to Firestore with explicit document ID
   const docRef = doc(db, GRADES_COLL, generatedId);
-  await safeFirestoreWrite(setDoc(docRef, newGradeObj), 200);
+  await safeFirestoreWrite(setDoc(docRef, newGradeObj), 5000);
 
   return generatedId;
 }
@@ -2876,7 +2951,7 @@ export async function addGradesBatch(names: string[]): Promise<{ id: string; nam
           createdAt: now + i + idx
         });
       });
-      await safeFirestoreWrite(batch.commit(), 300);
+      await safeFirestoreWrite(batch.commit(), 5000);
     }
   }
 
@@ -3032,7 +3107,7 @@ export async function addClass(name: string, gradeId: string): Promise<string> {
 
   // Firestore write with deterministic document ID
   const docRef = doc(db, CLASSES_COLL, generatedId);
-  await safeFirestoreWrite(setDoc(docRef, newClassObj), 200);
+  await safeFirestoreWrite(setDoc(docRef, newClassObj), 5000);
 
   return generatedId;
 }
@@ -3110,7 +3185,7 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
           createdAt: now + i + idx
         });
       });
-      await safeFirestoreWrite(batch.commit(), 300);
+      await safeFirestoreWrite(batch.commit(), 5000);
     }
   }
 
@@ -3404,7 +3479,7 @@ export async function addTeacher(name: string): Promise<string> {
   postToServerSync("/api/sync/teachers", { record: newTeacherObj });
 
   const docRef = doc(db, TEACHERS_COLL, generatedId);
-  await safeFirestoreWrite(setDoc(docRef, newTeacherObj), 200);
+  await safeFirestoreWrite(setDoc(docRef, newTeacherObj), 5000);
 
   return generatedId;
 }
@@ -3458,7 +3533,7 @@ export async function addTeachersBatch(names: string[]): Promise<Teacher[]> {
           createdAt: now + i + idx
         });
       });
-      await safeFirestoreWrite(batch.commit(), 300);
+      await safeFirestoreWrite(batch.commit(), 5000);
     }
   }
 
@@ -3470,7 +3545,7 @@ export async function deleteTeacher(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   removeLocalItemsBy(TEACHERS_COLL, (t) => t.id === id || t._docId === id || t._origId === id, eff.uid);
   postToServerSync("/api/sync/teachers", { deletedIds: [id] });
-  await safeFirestoreWrite(deleteDoc(doc(db, TEACHERS_COLL, id)), 200);
+  await safeFirestoreWrite(deleteDoc(doc(db, TEACHERS_COLL, id)), 5000);
 }
 
 // Delete Multiple Teachers in a Batch (Instant 0ms local purge + real-time Firestore delete)
@@ -3483,7 +3558,7 @@ export async function deleteTeachersBatch(ids: string[]): Promise<void> {
   ids.forEach(id => {
     batch.delete(doc(db, TEACHERS_COLL, id));
   });
-  await safeFirestoreWrite(batch.commit(), 300);
+  await safeFirestoreWrite(batch.commit(), 5000);
 }
 
 // Add Student (Deduplicates automatically by classId and normalized student name)
@@ -3539,7 +3614,7 @@ export async function addStudent(name: string, gradeId: string, classId: string)
   postToServerSync("/api/sync/students", { record: newStudentObj });
 
   const docRef = doc(db, STUDENTS_COLL, generatedId);
-  await safeFirestoreWrite(setDoc(docRef, newStudentObj), 200);
+  await safeFirestoreWrite(setDoc(docRef, newStudentObj), 5000);
 
   return generatedId;
 }
@@ -3633,7 +3708,7 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
           createdAt: now + i + idx
         });
       });
-      await safeFirestoreWrite(batch.commit(), 300);
+      await safeFirestoreWrite(batch.commit(), 5000);
     }
   }
 
@@ -3646,7 +3721,7 @@ export async function deleteStudent(id: string): Promise<void> {
   recordDeletedId("students", id);
   removeLocalItemsBy(STUDENTS_COLL, (s) => s.id === id || s._docId === id || s._origId === id, eff.uid);
   postToServerSync("/api/sync/students", { deletedIds: [id] });
-  await safeFirestoreWrite(deleteDoc(doc(db, STUDENTS_COLL, id)), 200);
+  await safeFirestoreWrite(deleteDoc(doc(db, STUDENTS_COLL, id)), 5000);
 }
 
 // Delete Multiple Students in a Batch (Instant 0ms local purge + real-time Firestore delete)
@@ -3660,7 +3735,7 @@ export async function deleteStudentsBatch(ids: string[]): Promise<void> {
   ids.forEach(id => {
     batch.delete(doc(db, STUDENTS_COLL, id));
   });
-  await safeFirestoreWrite(batch.commit(), 300);
+  await safeFirestoreWrite(batch.commit(), 5000);
 }
 
 // Fetch all attendance for statistics
@@ -3857,19 +3932,19 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
   // 3. Persist to Firestore
   const docKey = email ? `settings_${email.replace(/[^a-zA-Z0-9]/g, '_')}` : `settings_${uid}`;
   const docRef = doc(db, SETTINGS_COLL, docKey);
-  await safeFirestoreWrite(setDoc(docRef, { schoolName: trimmed, userId: uid, userEmail: email, schoolCode, updatedAt: Date.now() }, { merge: true }), 200);
+  await safeFirestoreWrite(setDoc(docRef, { schoolName: trimmed, userId: uid, userEmail: email, schoolCode, updatedAt: Date.now() }, { merge: true }), 5000);
 
   if (schoolCode) {
     const codeDocKey = `settings_${schoolCode.replace(/[^a-zA-Z0-9]/g, '_')}`;
     if (codeDocKey !== docKey) {
       const codeDocRef = doc(db, SETTINGS_COLL, codeDocKey);
-      await safeFirestoreWrite(setDoc(codeDocRef, { schoolName: trimmed, userId: uid, userEmail: email, schoolCode, updatedAt: Date.now() }, { merge: true }), 200);
+      await safeFirestoreWrite(setDoc(codeDocRef, { schoolName: trimmed, userId: uid, userEmail: email, schoolCode, updatedAt: Date.now() }, { merge: true }), 5000);
     }
   }
 
   if (uid && docKey !== `settings_${uid}`) {
     const uidDocRef = doc(db, SETTINGS_COLL, `settings_${uid}`);
-    await safeFirestoreWrite(setDoc(uidDocRef, { schoolName: trimmed, userId: uid, userEmail: email, schoolCode, updatedAt: Date.now() }, { merge: true }), 200);
+    await safeFirestoreWrite(setDoc(uidDocRef, { schoolName: trimmed, userId: uid, userEmail: email, schoolCode, updatedAt: Date.now() }, { merge: true }), 5000);
   }
 
   if (uid) {
@@ -3932,6 +4007,7 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
     try {
       const q = collection(db, colName);
       hub.unsub = onSnapshot(q, (snapshot) => {
+        setCloudSyncStatus("connected", "المزامنة السحابية اللحظية متصلة ونشطة");
         const activeEff = getEffectiveUidAndEmail();
         const activeUid = activeEff.uid || "";
         const activeEmail = (activeEff.email || "").toLowerCase().trim();
@@ -3985,7 +4061,9 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
       }, (error: any) => {
         const msg = (error?.message || "").toLowerCase();
         const code = error?.code || "";
-        if (code === "not-found" || msg.includes("does not exist") || msg.includes("not_found")) {
+        if (code === "permission-denied" || msg.includes("permission-denied") || msg.includes("missing or insufficient permissions")) {
+          setCloudSyncStatus("permission-denied", "تم رفض الإذن (Permission Denied) في Firestore. قواعد الأمان تمنع المزامنة اللحظية مع موقع كلاودفلير.");
+        } else if (code === "not-found" || msg.includes("does not exist") || msg.includes("not_found")) {
           const currentId = getActiveFirestoreDatabaseId();
           const altId = currentId === "apsent-02" ? "(default)" : "apsent-02";
           console.warn(`Firestore database '${currentId}' not found in onSnapshot. Auto-switching to '${altId}'...`);
