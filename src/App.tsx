@@ -25,7 +25,6 @@ import {
   resolveOwnerProfileFromDb,
   getOrCreateOwnSchoolAdminId,
   setLinkedSchoolOwnerId,
-  restoreGradeDefaultClasses,
   downloadSchoolBackupFile,
   importSchoolBackupData,
   testCloudFirestoreConnection,
@@ -487,7 +486,7 @@ export default function App() {
                 setActiveUser(restoredUser);
                 setCurrentUser(restoredUser);
               } else {
-                // Keep local cached user and offline school data so the UI is responsive immediately
+                // Keep unauthenticated state clean - do not load school data if not logged in
                 const fallback = {
                   uid: "guest_school_admin",
                   email: "admin@school.local",
@@ -496,7 +495,6 @@ export default function App() {
                 };
                 setActiveUser(fallback);
                 setCurrentUser(fallback);
-                ensureRegisteredSchoolLoaded().catch(() => {});
               }
             }
           }
@@ -580,6 +578,18 @@ export default function App() {
   };
 
   useEffect(() => {
+    // If not authenticated with Google, do NOT load or display any school data!
+    if (!currentUser || currentUser.isGuest) {
+      setGrades([]);
+      setClasses([]);
+      setTeachers([]);
+      setStudents([]);
+      setSchoolName("");
+      setTodayCounts({ absentCount: 0, behaviorCount: 0 });
+      setLoading(false);
+      return;
+    }
+
     // Pre-populate with local cached items for 0ms instant display while live sync connects
     const localGrades = getLocalCollection<Grade>("grades");
     const localClasses = getLocalCollection<Class>("classes");
@@ -590,17 +600,12 @@ export default function App() {
     setTeachers(localTeachers);
     setStudents(localStudents);
 
-    // Check cached school name strictly scoped to current user email/uid, or registered school name
+    // Check cached school name strictly scoped to current user email/uid
     const userEmail = currentUser?.email?.toLowerCase().trim();
     const userUid = currentUser?.uid;
     const cachedName = (userEmail ? localStorage.getItem(`school_name_${userEmail}`) : null) || 
-      (userUid ? localStorage.getItem(`school_name_${userUid}`) : null) ||
-      localStorage.getItem("school_name_cache") ||
-      localStorage.getItem("school_name_cached");
+      (userUid ? localStorage.getItem(`school_name_${userUid}`) : null);
     if (cachedName) setSchoolName(cachedName);
-
-    // Proactively pull registered school data if guest or on mount
-    ensureRegisteredSchoolLoaded().catch(() => {});
 
     // Only activate loading if there is zero cached data
     if (localGrades.length === 0 && localClasses.length === 0 && !cachedName) {
@@ -764,7 +769,8 @@ export default function App() {
               currentGrades,
               currentClasses,
               currentTeachers,
-              currentStudents
+              currentStudents,
+              true
             );
           }
         } catch (_) {}
@@ -843,13 +849,14 @@ export default function App() {
       const finalStudents = deduplicateStudents(s);
       setStudents(finalStudents);
 
-      // Synchronize all latest data to server sync store
+      // Synchronize all latest data to server sync store (exact match)
       bootstrapSchoolToServer(
         sn || schoolName,
         sortedGrades,
         sortedClasses,
         sortedTeachers,
-        finalStudents
+        finalStudents,
+        true
       );
 
       try {
@@ -1565,6 +1572,10 @@ export default function App() {
   ];
 
   const handleMenuItemClick = (mode: "teacher" | "admin" | "super-admin", tab: any) => {
+    if (!currentUser || currentUser.isGuest) {
+      handleGoogleLogin();
+      return;
+    }
     setAppMode(mode);
     if (mode === "teacher") {
       setTeacherTab(tab);
@@ -1614,6 +1625,10 @@ export default function App() {
                   type="button"
                   id="btn-edit-school"
                   onClick={() => {
+                    if (!currentUser || currentUser.isGuest) {
+                      handleGoogleLogin();
+                      return;
+                    }
                     setSidebarSchoolInput(schoolName || "");
                     setIsEditingSidebarSchool(true);
                   }}
@@ -1675,6 +1690,10 @@ export default function App() {
             ) : (
               <div 
                 onClick={() => {
+                  if (!currentUser || currentUser.isGuest) {
+                    handleGoogleLogin();
+                    return;
+                  }
                   setSidebarSchoolInput(schoolName || "");
                   setIsEditingSidebarSchool(true);
                 }}
@@ -1682,7 +1701,7 @@ export default function App() {
                 title="اضغط للتعديل"
               >
                 <span className={`text-xs font-extrabold truncate ${schoolName ? "text-slate-800" : "text-slate-400 italic"}`}>
-                  {schoolName || "انقر هنا لكتابة اسم مدرستك..."}
+                  {(!currentUser || currentUser?.isGuest) ? "سجّل الدخول لعرض المدرسة" : (schoolName || "انقر هنا لكتابة اسم مدرستك...")}
                 </span>
                 {isSavingSchoolName ? (
                   <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin flex-shrink-0" />
@@ -1761,7 +1780,13 @@ export default function App() {
                               <button
                                 type="button"
                                 id="btn-copy-stats-link"
-                                onClick={handleCopyStatsLink}
+                                onClick={() => {
+                                  if (!currentUser || currentUser.isGuest) {
+                                    handleGoogleLogin();
+                                    return;
+                                  }
+                                  handleCopyStatsLink();
+                                }}
                                 className="w-full flex items-center justify-between gap-1 text-[10px] text-blue-700 hover:text-blue-800 font-extrabold bg-white hover:bg-blue-50 border border-blue-200/80 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer shadow-3xs"
                                 title="نسخ رابط صفحة متابعة الغياب والسلوك لمشاركتها مباشرة"
                               >
@@ -1789,7 +1814,13 @@ export default function App() {
                             >
                               <div className="absolute top-0 right-0 h-full w-1 bg-purple-500/80"></div>
                               <button
-                                onClick={() => navigateTo("teacher")}
+                                onClick={() => {
+                                  if (!currentUser || currentUser.isGuest) {
+                                    handleGoogleLogin();
+                                    return;
+                                  }
+                                  navigateTo("teacher");
+                                }}
                                 className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer ${
                                   appMode === "teacher"
                                     ? "bg-purple-600 text-white shadow-md shadow-purple-600/20"
@@ -1809,7 +1840,13 @@ export default function App() {
                                 <button
                                   type="button"
                                   id="btn-copy-teacher-link"
-                                  onClick={handleCopyTeacherLink}
+                                  onClick={() => {
+                                    if (!currentUser || currentUser.isGuest) {
+                                      handleGoogleLogin();
+                                      return;
+                                    }
+                                    handleCopyTeacherLink();
+                                  }}
                                   className="w-full flex items-center justify-between gap-1 text-[10px] text-purple-700 hover:text-purple-800 font-extrabold bg-white hover:bg-purple-50 border border-purple-200/80 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer shadow-3xs"
                                   title="نسخ رابط تسجيل الغياب للمعلمين لمشاركته مباشرة"
                                 >
@@ -1835,7 +1872,13 @@ export default function App() {
                             >
                               <div className="absolute top-0 right-0 h-full w-1 bg-amber-500/80"></div>
                               <button
-                                onClick={() => navigateTo("morning-delay")}
+                                onClick={() => {
+                                  if (!currentUser || currentUser.isGuest) {
+                                    handleGoogleLogin();
+                                    return;
+                                  }
+                                  navigateTo("morning-delay");
+                                }}
                                 className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer ${
                                   appMode === "morning-delay"
                                     ? "bg-amber-600 text-white shadow-md shadow-amber-600/20"
@@ -1855,7 +1898,13 @@ export default function App() {
                                 <button
                                   type="button"
                                   id="btn-copy-morning-delay-link"
-                                  onClick={handleCopyMorningDelayLink}
+                                  onClick={() => {
+                                    if (!currentUser || currentUser.isGuest) {
+                                      handleGoogleLogin();
+                                      return;
+                                    }
+                                    handleCopyMorningDelayLink();
+                                  }}
                                   className="w-full flex items-center justify-between gap-1 text-[10px] text-amber-800 hover:text-amber-900 font-extrabold bg-white hover:bg-amber-50 border border-amber-200/80 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer shadow-3xs"
                                   title="نسخ رابط تسجيل التأخر الصباحي لمشاركته مع المشرفين مباشرة"
                                 >
@@ -2016,6 +2065,7 @@ export default function App() {
             onRefreshData={onTriggerRefresh}
             isRefreshing={isRefreshingData}
             onTogglePreviewOrMenu={() => setIsMobileDrawerOpen(true)}
+            onGoogleLogin={handleGoogleLogin}
           />
         )}
 
@@ -2047,37 +2097,29 @@ export default function App() {
 
         {/* Dynamic Inner Portal Content */}
         <main className="flex-1 w-full max-w-full min-w-0 px-2.5 sm:px-4 md:px-6 py-3 sm:py-4 pb-28 md:pb-8 space-y-3 sm:space-y-4">
-          {/* Registration / Live School View Status Banner */}
-          {!isDirectKiosk && (!currentUser || currentUser?.isGuest) && (
-            <div className="bg-emerald-50/90 border border-emerald-200 text-emerald-950 rounded-2xl p-3.5 sm:p-4 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 animate-in fade-in">
-              <div className="flex items-center gap-3 text-right w-full sm:w-auto">
-                <div className="p-2.5 bg-emerald-600 text-white rounded-xl shadow-sm flex-shrink-0">
-                  <School className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-xs sm:text-sm font-black text-emerald-900">
-                      معاينة مباشرة: {schoolName || "المدرسة المسجلة"}
-                    </p>
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                      نشط ومتاح
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-emerald-700/90 font-medium mt-0.5">
-                    يتم عرض بيانات وسجلات المدرسة المسجلة مباشرة. لتعديل السجلات وحفظها سحابياً، سجّل دخولك بحساب Google.
-                  </p>
-                </div>
+          {(!currentUser || currentUser?.isGuest) && !isDirectKiosk ? (
+            <div className="w-full max-w-lg mx-auto my-12 bg-white rounded-3xl p-6 sm:p-10 border border-slate-200/90 shadow-lg text-center space-y-6 animate-in fade-in">
+              <div className="w-16 h-16 rounded-3xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto text-3xl shadow-inner">
+                🔒
               </div>
-
-              <div className="flex items-center gap-2 flex-shrink-0 w-full sm:w-auto">
+              <div className="space-y-2">
+                <h2 className="text-lg sm:text-xl font-black text-slate-900">
+                  تسجيل الدخول مطلوب
+                </h2>
+                <p className="text-xs sm:text-sm font-medium text-slate-600 leading-relaxed max-w-sm mx-auto">
+                  لحماية خصوصية البيانات وسجلات المدرسة والطلاب، يجب تسجيل الدخول بحساب Google لاستعراض بيانات المدرسة.
+                </p>
+              </div>
+              <div className="pt-2">
                 <button
                   type="button"
+                  id="btn-main-google-login"
                   onClick={handleGoogleLogin}
-                  className="w-full sm:w-auto py-2 px-4 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm transition cursor-pointer"
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md shadow-indigo-600/25 transition-all transform hover:scale-[1.02] cursor-pointer"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path
-                      fill="currentColor"
+                      fill="#EA4335"
                       d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
                     />
                   </svg>
@@ -2085,10 +2127,8 @@ export default function App() {
                 </button>
               </div>
             </div>
-          )}
-
-          {/* Active View Container */}
-          <div id="active-portal-view" className="w-full max-w-full min-w-0">
+          ) : (
+            <div id="active-portal-view" className="w-full max-w-full min-w-0">
             {appMode === "super-admin" ? (
               <SuperAdminPanel
                 currentUser={currentUser}
@@ -2153,6 +2193,7 @@ export default function App() {
             />
           )}
           </div>
+        )}
         </main>
 
         {/* Styled Footer */}

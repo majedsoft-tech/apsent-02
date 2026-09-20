@@ -118,6 +118,63 @@ export const CLASS_ID_FALLBACK_MAP: Record<string, { classId: string; gradeId: s
   "cls_1788615270903_f26on4o": { classId: "cls_1787486505867_qthqy83", gradeId: "grd_1787486478421_zpivf6l" }
 };
 
+// ----------------------------------------------------
+// PERMANENT DELETION TOMBSTONE (Never restore deleted data)
+// ----------------------------------------------------
+const DELETED_ENTITIES_KEY = "apsent_deleted_entities_record_v1";
+
+export function recordDeletedId(type: "classes" | "grades" | "students" | "teachers", id: string): void {
+  if (typeof window === "undefined" || !id) return;
+  try {
+    const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    const itemKey = `${type}:${id}`;
+    if (!list.includes(itemKey)) {
+      list.push(itemKey);
+      if (list.length > 5000) list.shift();
+      localStorage.setItem(DELETED_ENTITIES_KEY, JSON.stringify(list));
+    }
+  } catch (_) {}
+}
+
+export function recordDeletedIds(type: "classes" | "grades" | "students" | "teachers", ids: string[]): void {
+  if (typeof window === "undefined" || !Array.isArray(ids) || ids.length === 0) return;
+  try {
+    const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    const set = new Set(list);
+    ids.forEach(id => {
+      if (id) set.add(`${type}:${id}`);
+    });
+    const updated = Array.from(set);
+    if (updated.length > 5000) updated.splice(0, updated.length - 5000);
+    localStorage.setItem(DELETED_ENTITIES_KEY, JSON.stringify(updated));
+  } catch (_) {}
+}
+
+export function isIdDeleted(type: "classes" | "grades" | "students" | "teachers", id: string): boolean {
+  if (typeof window === "undefined" || !id) return false;
+  try {
+    const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
+    if (!raw) return false;
+    const list: string[] = JSON.parse(raw);
+    return list.includes(`${type}:${id}`);
+  } catch (_) {
+    return false;
+  }
+}
+
+export function unmarkDeletedId(type: "classes" | "grades" | "students" | "teachers", id: string): void {
+  if (typeof window === "undefined" || !id) return;
+  try {
+    const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
+    if (!raw) return;
+    let list: string[] = JSON.parse(raw);
+    list = list.filter(item => item !== `${type}:${id}`);
+    localStorage.setItem(DELETED_ENTITIES_KEY, JSON.stringify(list));
+  } catch (_) {}
+}
+
 export function normalizeStudentData(student: any): any {
   if (!student) return student;
   let gradeId = student.gradeId;
@@ -725,60 +782,121 @@ export function initServerSyncEngine(): void {
     evtSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
+        if (payload.type === "purge_all") {
+          const cols = [GRADES_COLL, CLASSES_COLL, TEACHERS_COLL, STUDENTS_COLL, ATTENDANCE_COLL, BEHAVIORS_COLL, MORNING_DELAYS_COLL, SETTINGS_COLL];
+          cols.forEach(colName => {
+            setLocalItems(colName, []);
+            notifyCollectionSubscribers(colName, []);
+          });
+          collectionHubs.forEach(hub => {
+            hub.latestData = [];
+            hub.lastUpdated = Date.now();
+            hub.callbacks.forEach(cb => { try { cb([]); } catch (_) {} });
+          });
+          try {
+            window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          } catch (_) {}
+          return;
+        }
+
         if (payload.type === "attendance_updated") {
-          const items = Array.isArray(payload.data) ? payload.data : [payload.data];
-          bulkSaveOrUpdateLocalItems(ATTENDANCE_COLL, items);
+          if (payload.data?.clearAll) {
+            setLocalItems(ATTENDANCE_COLL, []);
+            notifyCollectionSubscribers(ATTENDANCE_COLL, []);
+          } else {
+            const items = Array.isArray(payload.data) ? payload.data : [payload.data];
+            bulkSaveOrUpdateLocalItems(ATTENDANCE_COLL, items);
+          }
         } else if (payload.type === "behavior_updated") {
-          const items = Array.isArray(payload.data) ? payload.data : [payload.data];
-          bulkSaveOrUpdateLocalItems(BEHAVIORS_COLL, items);
+          if (payload.data?.clearAll) {
+            setLocalItems(BEHAVIORS_COLL, []);
+            notifyCollectionSubscribers(BEHAVIORS_COLL, []);
+          } else {
+            const items = Array.isArray(payload.data) ? payload.data : [payload.data];
+            bulkSaveOrUpdateLocalItems(BEHAVIORS_COLL, items);
+          }
         } else if (payload.type === "delay_updated") {
-          const items = Array.isArray(payload.data) ? payload.data : [payload.data];
-          bulkSaveOrUpdateLocalItems(MORNING_DELAYS_COLL, items);
+          if (payload.data?.clearAll) {
+            setLocalItems(MORNING_DELAYS_COLL, []);
+            notifyCollectionSubscribers(MORNING_DELAYS_COLL, []);
+          } else {
+            const items = Array.isArray(payload.data) ? payload.data : [payload.data];
+            bulkSaveOrUpdateLocalItems(MORNING_DELAYS_COLL, items);
+          }
         } else if (payload.type === "school_updated") {
-          const newSchoolName = payload.data?.schoolName || (typeof payload.data === "string" ? payload.data : "");
-          if (newSchoolName) {
+          if (payload.data?.cleared) {
             const currentEff = getEffectiveUidAndEmail();
-            if (currentEff.email) localStorage.setItem(`school_name_${currentEff.email}`, newSchoolName);
-            if (currentEff.uid) localStorage.setItem(`school_name_${currentEff.uid}`, newSchoolName);
-            localStorage.setItem("school_name_cache", newSchoolName);
-            localStorage.setItem("school_name_cached", newSchoolName);
-            window.dispatchEvent(new CustomEvent("school_name_updated", { detail: newSchoolName }));
+            if (currentEff.email) localStorage.removeItem(`school_name_${currentEff.email}`);
+            if (currentEff.uid) localStorage.removeItem(`school_name_${currentEff.uid}`);
+            localStorage.removeItem("school_name_cache");
+            localStorage.removeItem("school_name_cached");
+            window.dispatchEvent(new CustomEvent("school_name_updated", { detail: "" }));
+          } else {
+            const newSchoolName = payload.data?.schoolName || (typeof payload.data === "string" ? payload.data : "");
+            if (newSchoolName) {
+              const currentEff = getEffectiveUidAndEmail();
+              if (currentEff.email) localStorage.setItem(`school_name_${currentEff.email}`, newSchoolName);
+              if (currentEff.uid) localStorage.setItem(`school_name_${currentEff.uid}`, newSchoolName);
+              localStorage.setItem("school_name_cache", newSchoolName);
+              localStorage.setItem("school_name_cached", newSchoolName);
+              window.dispatchEvent(new CustomEvent("school_name_updated", { detail: newSchoolName }));
+            }
           }
         } else if (payload.type === "grades_updated") {
-          if (Array.isArray(payload.data?.deletedIds)) {
-            payload.data.deletedIds.forEach((delId: string) => {
-              removeLocalItemsBy(GRADES_COLL, g => g.id === delId || g._docId === delId);
-            });
-          }
-          if (Array.isArray(payload.data?.records)) {
-            bulkSaveOrUpdateLocalItems(GRADES_COLL, payload.data.records);
+          if (payload.data?.clearAll) {
+            setLocalItems(GRADES_COLL, []);
+            notifyCollectionSubscribers(GRADES_COLL, []);
+          } else {
+            if (Array.isArray(payload.data?.deletedIds)) {
+              payload.data.deletedIds.forEach((delId: string) => {
+                removeLocalItemsBy(GRADES_COLL, g => g.id === delId || g._docId === delId);
+              });
+            }
+            if (Array.isArray(payload.data?.records)) {
+              bulkSaveOrUpdateLocalItems(GRADES_COLL, payload.data.records);
+            }
           }
         } else if (payload.type === "classes_updated") {
-          if (Array.isArray(payload.data?.deletedIds)) {
-            payload.data.deletedIds.forEach((delId: string) => {
-              removeLocalItemsBy(CLASSES_COLL, c => c.id === delId || c._docId === delId);
-            });
-          }
-          if (Array.isArray(payload.data?.records)) {
-            bulkSaveOrUpdateLocalItems(CLASSES_COLL, payload.data.records);
+          if (payload.data?.clearAll) {
+            setLocalItems(CLASSES_COLL, []);
+            notifyCollectionSubscribers(CLASSES_COLL, []);
+          } else {
+            if (Array.isArray(payload.data?.deletedIds)) {
+              payload.data.deletedIds.forEach((delId: string) => {
+                removeLocalItemsBy(CLASSES_COLL, c => c.id === delId || c._docId === delId);
+              });
+            }
+            if (Array.isArray(payload.data?.records)) {
+              bulkSaveOrUpdateLocalItems(CLASSES_COLL, payload.data.records);
+            }
           }
         } else if (payload.type === "teachers_updated") {
-          if (Array.isArray(payload.data?.deletedIds)) {
-            payload.data.deletedIds.forEach((delId: string) => {
-              removeLocalItemsBy(TEACHERS_COLL, t => t.id === delId || t._docId === delId);
-            });
-          }
-          if (Array.isArray(payload.data?.records)) {
-            bulkSaveOrUpdateLocalItems(TEACHERS_COLL, payload.data.records);
+          if (payload.data?.clearAll) {
+            setLocalItems(TEACHERS_COLL, []);
+            notifyCollectionSubscribers(TEACHERS_COLL, []);
+          } else {
+            if (Array.isArray(payload.data?.deletedIds)) {
+              payload.data.deletedIds.forEach((delId: string) => {
+                removeLocalItemsBy(TEACHERS_COLL, t => t.id === delId || t._docId === delId);
+              });
+            }
+            if (Array.isArray(payload.data?.records)) {
+              bulkSaveOrUpdateLocalItems(TEACHERS_COLL, payload.data.records);
+            }
           }
         } else if (payload.type === "students_updated") {
-          if (Array.isArray(payload.data?.deletedIds)) {
-            payload.data.deletedIds.forEach((delId: string) => {
-              removeLocalItemsBy(STUDENTS_COLL, s => s.id === delId || s._docId === delId);
-            });
-          }
-          if (Array.isArray(payload.data?.records)) {
-            bulkSaveOrUpdateLocalItems(STUDENTS_COLL, payload.data.records);
+          if (payload.data?.clearAll) {
+            setLocalItems(STUDENTS_COLL, []);
+            notifyCollectionSubscribers(STUDENTS_COLL, []);
+          } else {
+            if (Array.isArray(payload.data?.deletedIds)) {
+              payload.data.deletedIds.forEach((delId: string) => {
+                removeLocalItemsBy(STUDENTS_COLL, s => s.id === delId || s._docId === delId);
+              });
+            }
+            if (Array.isArray(payload.data?.records)) {
+              bulkSaveOrUpdateLocalItems(STUDENTS_COLL, payload.data.records);
+            }
           }
         } else if (payload.type === "bootstrap_updated") {
           pollServer();
@@ -823,38 +941,42 @@ export function initServerSyncEngine(): void {
           }
 
           // Grades Sync (Bulk diff check)
-          if (Array.isArray(json.grades) && json.grades.length > 0) {
+          if (Array.isArray(json.grades)) {
+            const filtered = json.grades.filter((g: any) => g && g.id && !isIdDeleted("grades", g.id));
             const cur = getLocalItems(GRADES_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(json.grades)) {
-              setLocalItems(GRADES_COLL, json.grades, currentEff.uid);
-              notifyCollectionSubscribers(GRADES_COLL, json.grades);
+            if (JSON.stringify(cur) !== JSON.stringify(filtered)) {
+              setLocalItems(GRADES_COLL, filtered, currentEff.uid);
+              notifyCollectionSubscribers(GRADES_COLL, filtered);
             }
           }
 
           // Classes Sync (Bulk diff check)
-          if (Array.isArray(json.classes) && json.classes.length > 0) {
+          if (Array.isArray(json.classes)) {
+            const filtered = json.classes.filter((c: any) => c && c.id && !isIdDeleted("classes", c.id));
             const cur = getLocalItems(CLASSES_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(json.classes)) {
-              setLocalItems(CLASSES_COLL, json.classes, currentEff.uid);
-              notifyCollectionSubscribers(CLASSES_COLL, json.classes);
+            if (JSON.stringify(cur) !== JSON.stringify(filtered)) {
+              setLocalItems(CLASSES_COLL, filtered, currentEff.uid);
+              notifyCollectionSubscribers(CLASSES_COLL, filtered);
             }
           }
 
           // Teachers Sync (Bulk diff check)
-          if (Array.isArray(json.teachers) && json.teachers.length > 0) {
+          if (Array.isArray(json.teachers)) {
+            const filtered = json.teachers.filter((t: any) => t && t.id && !isIdDeleted("teachers", t.id));
             const cur = getLocalItems(TEACHERS_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(json.teachers)) {
-              setLocalItems(TEACHERS_COLL, json.teachers, currentEff.uid);
-              notifyCollectionSubscribers(TEACHERS_COLL, json.teachers);
+            if (JSON.stringify(cur) !== JSON.stringify(filtered)) {
+              setLocalItems(TEACHERS_COLL, filtered, currentEff.uid);
+              notifyCollectionSubscribers(TEACHERS_COLL, filtered);
             }
           }
 
           // Students Sync (Bulk diff check)
-          if (Array.isArray(json.students) && json.students.length > 0) {
+          if (Array.isArray(json.students)) {
+            const filtered = json.students.filter((s: any) => s && s.id && !isIdDeleted("students", s.id));
             const cur = getLocalItems(STUDENTS_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(json.students)) {
-              setLocalItems(STUDENTS_COLL, json.students, currentEff.uid);
-              notifyCollectionSubscribers(STUDENTS_COLL, json.students);
+            if (JSON.stringify(cur) !== JSON.stringify(filtered)) {
+              setLocalItems(STUDENTS_COLL, filtered, currentEff.uid);
+              notifyCollectionSubscribers(STUDENTS_COLL, filtered);
             }
           }
 
@@ -920,21 +1042,33 @@ export async function ensureRegisteredSchoolLoaded(): Promise<void> {
           localStorage.setItem("school_name_cached", json.schoolName);
           window.dispatchEvent(new CustomEvent("school_name_updated", { detail: json.schoolName }));
         }
-        if (Array.isArray(json.grades) && json.grades.length > 0) {
-          setLocalItems(GRADES_COLL, json.grades, currentEff.uid);
-          notifyCollectionSubscribers(GRADES_COLL, json.grades);
+        if (Array.isArray(json.grades)) {
+          const filtered = json.grades.filter((g: any) => g && g.id && !isIdDeleted("grades", g.id));
+          if (filtered.length > 0) {
+            setLocalItems(GRADES_COLL, filtered, currentEff.uid);
+            notifyCollectionSubscribers(GRADES_COLL, filtered);
+          }
         }
-        if (Array.isArray(json.classes) && json.classes.length > 0) {
-          setLocalItems(CLASSES_COLL, json.classes, currentEff.uid);
-          notifyCollectionSubscribers(CLASSES_COLL, json.classes);
+        if (Array.isArray(json.classes)) {
+          const filtered = json.classes.filter((c: any) => c && c.id && !isIdDeleted("classes", c.id));
+          if (filtered.length > 0) {
+            setLocalItems(CLASSES_COLL, filtered, currentEff.uid);
+            notifyCollectionSubscribers(CLASSES_COLL, filtered);
+          }
         }
-        if (Array.isArray(json.teachers) && json.teachers.length > 0) {
-          setLocalItems(TEACHERS_COLL, json.teachers, currentEff.uid);
-          notifyCollectionSubscribers(TEACHERS_COLL, json.teachers);
+        if (Array.isArray(json.teachers)) {
+          const filtered = json.teachers.filter((t: any) => t && t.id && !isIdDeleted("teachers", t.id));
+          if (filtered.length > 0) {
+            setLocalItems(TEACHERS_COLL, filtered, currentEff.uid);
+            notifyCollectionSubscribers(TEACHERS_COLL, filtered);
+          }
         }
-        if (Array.isArray(json.students) && json.students.length > 0) {
-          setLocalItems(STUDENTS_COLL, json.students, currentEff.uid);
-          notifyCollectionSubscribers(STUDENTS_COLL, json.students);
+        if (Array.isArray(json.students)) {
+          const filtered = json.students.filter((s: any) => s && s.id && !isIdDeleted("students", s.id));
+          if (filtered.length > 0) {
+            setLocalItems(STUDENTS_COLL, filtered, currentEff.uid);
+            notifyCollectionSubscribers(STUDENTS_COLL, filtered);
+          }
         }
         if (Array.isArray(json.attendance) && json.attendance.length > 0) {
           setLocalItems(ATTENDANCE_COLL, json.attendance, currentEff.uid);
@@ -959,7 +1093,8 @@ export async function bootstrapSchoolToServer(
   grades: any[],
   classes: any[],
   teachers: any[],
-  students: any[]
+  students: any[],
+  clearFirst: boolean = false
 ): Promise<void> {
   if (typeof window === "undefined") return;
   const schoolCode = getSchoolCode();
@@ -979,7 +1114,8 @@ export async function bootstrapSchoolToServer(
         grades,
         classes,
         teachers,
-        students
+        students,
+        clearFirst
       })
     });
   } catch (_) {}
@@ -1989,10 +2125,10 @@ export async function getGrades(force: boolean = false): Promise<Grade[]> {
   const rawGrades = (await fetchAndFilterCollection(GRADES_COLL, force)) as Grade[];
   const safeGrades = Array.isArray(rawGrades) ? rawGrades : [];
   
-  const result: Grade[] = CANONICAL_GRADES.map(g => ({ ...g }));
-  const seen = new Set(["الاول", "الأول", "الثاني", "الثالث"]);
+  const result: Grade[] = [];
+  const seen = new Set<string>();
   for (const g of safeGrades) {
-    if (!g || !g.id) continue;
+    if (!g || !g.id || isIdDeleted("grades", g.id)) continue;
     const key = (g.name || "").replace(/[أإآ]/g, "ا").trim();
     if (key && !seen.has(key)) {
       seen.add(key);
@@ -2007,11 +2143,11 @@ export async function getClasses(force: boolean = false): Promise<Class[]> {
   const rawClasses = (await fetchAndFilterCollection(CLASSES_COLL, force)) as Class[];
   const safeClasses = Array.isArray(rawClasses) ? rawClasses : [];
   
-  const result: Class[] = CANONICAL_CLASSES.map(c => ({ ...c }));
-  const seen = new Set(CANONICAL_CLASSES.map(c => `${c.gradeId}_${(c.name || "").trim()}`));
+  const result: Class[] = [];
+  const seen = new Set<string>();
 
   for (const c of safeClasses) {
-    if (!c || !c.id) continue;
+    if (!c || !c.id || isIdDeleted("classes", c.id)) continue;
     const gradeId = CANONICAL_GRADE_MAP[c.gradeId] || c.gradeId;
     const key = `${gradeId}_${(c.name || "").trim()}`;
     if (!seen.has(key)) {
@@ -2029,7 +2165,7 @@ export async function getTeachers(force: boolean = false): Promise<Teacher[]> {
   const seen = new Set<string>();
   const uniqueTeachers: Teacher[] = [];
   for (const t of safeList) {
-    if (!t || !t.id) continue;
+    if (!t || !t.id || isIdDeleted("teachers", t.id)) continue;
     const key = (t.name || "").trim();
     if (!key || seen.has(key)) continue;
     seen.add(key);
@@ -2046,7 +2182,7 @@ export async function getStudents(force: boolean = false): Promise<Student[]> {
   const seenNames = new Set<string>();
   const uniqueStudents: Student[] = [];
   for (const s of normalized) {
-    if (!s) continue;
+    if (!s || !s.id || isIdDeleted("students", s.id)) continue;
     const nameKey = (s.name || "").trim().toLowerCase();
     if (!nameKey || seenNames.has(nameKey)) continue;
     seenNames.add(nameKey);
@@ -2650,6 +2786,7 @@ export async function addGrade(name: string): Promise<string> {
   }
 
   const generatedId = generateLocalId("grd");
+  unmarkDeletedId("grades", generatedId);
   const newGradeObj = {
     id: generatedId,
     name: trimmedName,
@@ -2712,6 +2849,7 @@ export async function addGradesBatch(names: string[]): Promise<{ id: string; nam
   });
 
   if (toCreate.length > 0) {
+    toCreate.forEach(item => unmarkDeletedId("grades", item.id));
     const fullCreated = toCreate.map(item => ({
       id: item.id,
       name: item.name,
@@ -2771,6 +2909,15 @@ export async function deleteGrade(id: string, gradeName?: string): Promise<void>
     classIdsToDelete.has(s.classId)
   );
   const studentIdsToDelete = new Set<string>(matchingStudents.map(s => s.id));
+
+  // Record permanent deletion tombstones
+  recordDeletedId("grades", id);
+  if (classIdsToDelete.size > 0) {
+    recordDeletedIds("classes", Array.from(classIdsToDelete));
+  }
+  if (studentIdsToDelete.size > 0) {
+    recordDeletedIds("students", Array.from(studentIdsToDelete));
+  }
 
   // 3. Delete from local storage cache immediately across ALL keys (0ms instant UI update)
   removeLocalItemsBy(GRADES_COLL, (g) => g.id === id || (g._docId && g._docId === id) || (resolvedGradeName && g.name?.trim() === resolvedGradeName), uid);
@@ -2867,6 +3014,7 @@ export async function addClass(name: string, gradeId: string): Promise<string> {
   }
 
   const generatedId = generateLocalId("cls");
+  unmarkDeletedId("classes", generatedId);
   const newClassObj = {
     id: generatedId,
     name: trimmedName,
@@ -2933,6 +3081,7 @@ export async function addClassesBatch(classesList: { name: string; gradeId: stri
   });
 
   if (toCreate.length > 0) {
+    toCreate.forEach(item => unmarkDeletedId("classes", item.id));
     const fullCreated = toCreate.map(item => ({
       id: item.id,
       name: item.name,
@@ -2987,6 +3136,12 @@ export async function deleteClass(id: string, gradeId?: string, className?: stri
       .filter(s => s.classId === id || (targetGradeId && targetClassName && s.gradeId === targetGradeId && s.className?.trim() === targetClassName))
       .map(s => s.id)
   );
+
+  // Record permanent deletion tombstones
+  recordDeletedId("classes", id);
+  if (studentIdsToDelete.size > 0) {
+    recordDeletedIds("students", Array.from(studentIdsToDelete));
+  }
 
   // 3. Purge from ALL local storage keys immediately (0ms)
   removeLocalItemsBy(CLASSES_COLL, (c) => 
@@ -3065,6 +3220,23 @@ export async function deleteClassesForGrade(gradeId: string, gradeName?: string)
   );
   const classIds = new Set<string>(matchingClasses.map(c => c.id));
 
+  // Find all matching students
+  const localStudents = getLocalItems(STUDENTS_COLL, uid);
+  const matchingStudents = localStudents.filter(s =>
+    s.gradeId === gradeId ||
+    classIds.has(s.classId) ||
+    (resolvedGradeName && s.gradeName === resolvedGradeName)
+  );
+  const studentIds = new Set<string>(matchingStudents.map(s => s.id));
+
+  // Record permanent deletion tombstones
+  if (classIds.size > 0) {
+    recordDeletedIds("classes", Array.from(classIds));
+  }
+  if (studentIds.size > 0) {
+    recordDeletedIds("students", Array.from(studentIds));
+  }
+
   // 2. Local storage purge
   removeLocalItemsBy(CLASSES_COLL, (c) => 
     c.gradeId === gradeId || 
@@ -3072,17 +3244,31 @@ export async function deleteClassesForGrade(gradeId: string, gradeName?: string)
     (resolvedGradeName && (c.gradeId === resolvedGradeName || c.gradeName === resolvedGradeName)),
     uid
   );
+  removeLocalItemsBy(STUDENTS_COLL, (s) =>
+    s.gradeId === gradeId ||
+    classIds.has(s.classId) ||
+    studentIds.has(s.id) ||
+    (resolvedGradeName && s.gradeName === resolvedGradeName),
+    uid
+  );
 
   if (classIds.size > 0) {
     postToServerSync("/api/sync/classes", { deletedIds: Array.from(classIds) });
+  }
+  if (studentIds.size > 0) {
+    postToServerSync("/api/sync/students", { deletedIds: Array.from(studentIds) });
   }
 
   // 3. Firestore delete
   try {
     const batch = writeBatch(db);
     let count = 0;
-    const snap = await getDocs(collection(db, CLASSES_COLL));
-    snap.forEach(docSnap => {
+    const [snapC, snapS] = await Promise.all([
+      getDocs(collection(db, CLASSES_COLL)),
+      getDocs(collection(db, STUDENTS_COLL))
+    ]);
+
+    snapC.forEach(docSnap => {
       const d = docSnap.data();
       if (!isDocBelongingToUser(d, uid, email)) return;
       if (classIds.has(docSnap.id) || classIds.has(d.id) || d.gradeId === gradeId || (resolvedGradeName && (d.gradeId === resolvedGradeName || d.gradeName === resolvedGradeName))) {
@@ -3090,6 +3276,16 @@ export async function deleteClassesForGrade(gradeId: string, gradeName?: string)
         count++;
       }
     });
+
+    snapS.forEach(docSnap => {
+      const d = docSnap.data();
+      if (!isDocBelongingToUser(d, uid, email)) return;
+      if (studentIds.has(docSnap.id) || studentIds.has(d.id) || classIds.has(d.classId) || d.gradeId === gradeId) {
+        batch.delete(docSnap.ref);
+        count++;
+      }
+    });
+
     if (count > 0) {
       await safeFirestoreWrite(batch.commit(), 4000);
     }
@@ -3103,22 +3299,39 @@ export async function deleteAllGradesAndClasses(): Promise<void> {
   const eff = getEffectiveUidAndEmail();
   const uid = eff.uid;
 
-  // Clear local storage for grades and classes
+  const localGrades = getLocalItems(GRADES_COLL, uid);
+  const localClasses = getLocalItems(CLASSES_COLL, uid);
+  const localStudents = getLocalItems(STUDENTS_COLL, uid);
+
+  recordDeletedIds("grades", localGrades.map(g => g.id));
+  recordDeletedIds("classes", localClasses.map(c => c.id));
+  recordDeletedIds("students", localStudents.map(s => s.id));
+
+  // Clear local storage for grades, classes, and students
   setLocalItems(GRADES_COLL, [], uid);
   setLocalItems(CLASSES_COLL, [], uid);
+  setLocalItems(STUDENTS_COLL, [], uid);
   notifyCollectionSubscribers(GRADES_COLL, []);
   notifyCollectionSubscribers(CLASSES_COLL, []);
+  notifyCollectionSubscribers(STUDENTS_COLL, []);
+
+  // Server sync clear all
+  postToServerSync("/api/sync/grades", { clearAll: true });
+  postToServerSync("/api/sync/classes", { clearAll: true });
+  postToServerSync("/api/sync/students", { clearAll: true });
 
   // Delete from Firestore
   try {
-    const [gSnap, cSnap] = await Promise.all([
+    const [gSnap, cSnap, sSnap] = await Promise.all([
       getDocs(collection(db, GRADES_COLL)),
-      getDocs(collection(db, CLASSES_COLL))
+      getDocs(collection(db, CLASSES_COLL)),
+      getDocs(collection(db, STUDENTS_COLL))
     ]);
 
     const batch = writeBatch(db);
     gSnap.forEach(d => batch.delete(d.ref));
     cSnap.forEach(d => batch.delete(d.ref));
+    sSnap.forEach(d => batch.delete(d.ref));
     await safeFirestoreWrite(batch.commit(), 5000);
   } catch (e) {
     console.warn("Error deleting all grades and classes:", e);
@@ -3309,6 +3522,7 @@ export async function addStudent(name: string, gradeId: string, classId: string)
   }
 
   const generatedId = generateLocalId("stu");
+  unmarkDeletedId("students", generatedId);
 
   const newStudentObj = {
     id: generatedId,
@@ -3388,6 +3602,7 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
   });
 
   if (toCreate.length > 0) {
+    toCreate.forEach(item => unmarkDeletedId("students", item.id));
     const fullCreated = toCreate.map(item => ({
       id: item.id,
       name: item.name,
@@ -3428,6 +3643,7 @@ export async function addStudentsBatch(studentsList: { name: string, gradeId: st
 // Delete Student (Instant 0ms local purge + real-time Firestore delete)
 export async function deleteStudent(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
+  recordDeletedId("students", id);
   removeLocalItemsBy(STUDENTS_COLL, (s) => s.id === id || s._docId === id || s._origId === id, eff.uid);
   postToServerSync("/api/sync/students", { deletedIds: [id] });
   await safeFirestoreWrite(deleteDoc(doc(db, STUDENTS_COLL, id)), 200);
@@ -3436,6 +3652,7 @@ export async function deleteStudent(id: string): Promise<void> {
 // Delete Multiple Students in a Batch (Instant 0ms local purge + real-time Firestore delete)
 export async function deleteStudentsBatch(ids: string[]): Promise<void> {
   const eff = getEffectiveUidAndEmail();
+  recordDeletedIds("students", ids);
   const idSet = new Set(ids);
   removeLocalItemsBy(STUDENTS_COLL, (s) => idSet.has(s.id) || (s._docId && idSet.has(s._docId)) || (s._origId && idSet.has(s._origId)), eff.uid);
   postToServerSync("/api/sync/students", { deletedIds: ids });
@@ -3816,10 +4033,10 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
 export function subscribeToGrades(callback: (grades: Grade[]) => void, onError?: (error: any) => void) {
   return subscribeToCollection(GRADES_COLL, (rawGrades) => {
     const safeGrades = Array.isArray(rawGrades) ? rawGrades : [];
-    const result: Grade[] = CANONICAL_GRADES.map(g => ({ ...g }));
-    const seen = new Set(["الاول", "الأول", "الثاني", "الثالث"]);
+    const result: Grade[] = [];
+    const seen = new Set<string>();
     for (const g of safeGrades) {
-      if (!g || !g.id) continue;
+      if (!g || !g.id || isIdDeleted("grades", g.id)) continue;
       const key = (g.name || "").replace(/[أإآ]/g, "ا").trim();
       if (key && !seen.has(key)) {
         seen.add(key);
@@ -3834,11 +4051,11 @@ export function subscribeToGrades(callback: (grades: Grade[]) => void, onError?:
 export function subscribeToClasses(callback: (classes: Class[]) => void, onError?: (error: any) => void) {
   return subscribeToCollection(CLASSES_COLL, (rawClasses) => {
     const safeClasses = Array.isArray(rawClasses) ? rawClasses : [];
-    const result: Class[] = CANONICAL_CLASSES.map(c => ({ ...c }));
-    const seen = new Set(CANONICAL_CLASSES.map(c => `${c.gradeId}_${(c.name || "").trim()}`));
+    const result: Class[] = [];
+    const seen = new Set<string>();
 
     for (const c of safeClasses) {
-      if (!c || !c.id) continue;
+      if (!c || !c.id || isIdDeleted("classes", c.id)) continue;
       const gradeId = CANONICAL_GRADE_MAP[c.gradeId] || c.gradeId;
       const key = `${gradeId}_${(c.name || "").trim()}`;
       if (!seen.has(key)) {
@@ -3857,7 +4074,7 @@ export function subscribeToTeachers(callback: (teachers: Teacher[]) => void, onE
     const seen = new Set<string>();
     const uniqueTeachers: Teacher[] = [];
     for (const t of safeList) {
-      if (!t || !t.id) continue;
+      if (!t || !t.id || isIdDeleted("teachers", t.id)) continue;
       const key = (t.name || "").trim();
       if (!key || seen.has(key)) continue;
       seen.add(key);
@@ -3875,7 +4092,7 @@ export function subscribeToStudents(callback: (students: Student[]) => void, onE
     const seenNames = new Set<string>();
     const uniqueStudents: Student[] = [];
     for (const s of normalized) {
-      if (!s) continue;
+      if (!s || !s.id || isIdDeleted("students", s.id)) continue;
       const nameKey = (s.name || "").trim().toLowerCase();
       if (!nameKey || seenNames.has(nameKey)) continue;
       seenNames.add(nameKey);
@@ -4222,7 +4439,8 @@ export async function deleteRegisteredUser(uid: string, email: string, wipeSchoo
 }
 
 /**
- * Completely purges ALL server data, temporary cached records, and previously deleted items across ALL Firestore collections and local storage.
+ * Completely and permanently purges ALL server data, disk cache files, Firestore documents,
+ * and temporary local caches across ALL collections and storage layers.
  */
 export async function purgeAllServerAndTemporaryData(preserveSuperAdmin: boolean = true): Promise<{ deletedCount: number }> {
   let deletedCount = 0;
@@ -4242,41 +4460,87 @@ export async function purgeAllServerAndTemporaryData(preserveSuperAdmin: boolean
     collectionsToClear.push(USERS_COLL);
   }
 
-  // 1. Delete all documents in chunks from Firestore
-  for (const colName of collectionsToClear) {
-    try {
-      const snap = await getDocs(collection(db, colName));
-      if (!snap.empty) {
-        const docs = snap.docs;
-        const chunkSize = 400;
-        for (let i = 0; i < docs.length; i += chunkSize) {
-          const chunk = docs.slice(i, i + chunkSize);
-          const batch = writeBatch(db);
-          chunk.forEach(d => {
-            batch.delete(d.ref);
-            deletedCount++;
-          });
-          await batch.commit();
+  // 1. Permanently wipe Node.js Express server memory caches and disk JSON files
+  try {
+    const sCode = getSchoolCode();
+    const eff = getEffectiveUidAndEmail();
+    await fetch("/api/sync/purge-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schoolCode: sCode,
+        userEmail: eff.email,
+        userId: eff.uid,
+        purgeAllGlobally: true
+      })
+    });
+
+    const clearPayload = { clearAll: true, schoolCode: sCode, userEmail: eff.email, userId: eff.uid };
+    await Promise.allSettled([
+      fetch("/api/sync/grades", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clearPayload) }),
+      fetch("/api/sync/classes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clearPayload) }),
+      fetch("/api/sync/students", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clearPayload) }),
+      fetch("/api/sync/teachers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clearPayload) }),
+      fetch("/api/sync/attendance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clearPayload) }),
+      fetch("/api/sync/delays", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clearPayload) }),
+      fetch("/api/sync/behaviors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clearPayload) }),
+      fetch("/api/sync/school", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(clearPayload) })
+    ]);
+  } catch (e) {
+    console.warn("Error calling server sync purge endpoints:", e);
+  }
+
+  // 2. Permanently delete all documents from Firestore (both active DB and (default) database if different)
+  const dbsToClean: any[] = [db];
+  try {
+    const activeDbId = getActiveFirestoreDatabaseId();
+    if (activeDbId && activeDbId !== "(default)") {
+      const defaultDb = getDbForDatabaseId("(default)");
+      if (defaultDb) dbsToClean.push(defaultDb);
+    }
+  } catch (_) {}
+
+  for (const targetDb of dbsToClean) {
+    for (const colName of collectionsToClear) {
+      try {
+        const snap = await getDocs(collection(targetDb, colName));
+        if (!snap.empty) {
+          const docs = snap.docs;
+          const chunkSize = 400;
+          for (let i = 0; i < docs.length; i += chunkSize) {
+            const chunk = docs.slice(i, i + chunkSize);
+            const batch = writeBatch(targetDb);
+            chunk.forEach(d => {
+              batch.delete(d.ref);
+              deletedCount++;
+            });
+            await safeFirestoreWrite(batch.commit(), 5000);
+          }
         }
+      } catch (e) {
+        console.warn(`Error purging collection ${colName} from Firestore:`, e);
       }
-    } catch (e) {
-      console.warn(`Error purging collection ${colName}:`, e);
     }
   }
 
-  // 2. Clear all local browser storage caches
+  // 3. Clear all local browser storage caches & cached identifiers
   if (typeof window !== "undefined") {
     try {
       const keysToRemove: string[] = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (key && (
-          key.startsWith("school_offline_cache_") ||
-          key.startsWith("school_name_") ||
+          key.startsWith("school_") ||
           key.startsWith("user_alias_") ||
+          key.startsWith("own_school_") ||
+          key.startsWith("last_active_") ||
+          key.startsWith("firestore_quota_") ||
+          key === "registered_school_code" ||
           key === "school_name_cached" ||
-          key === "firestore_quota_backoff_until" ||
-          key === "linked_school_owner_id"
+          key === "school_name_cache" ||
+          key === "linked_school_owner_id" ||
+          key === "school_unique_code" ||
+          key === DELETED_ENTITIES_KEY
         )) {
           keysToRemove.push(key);
         }
@@ -4285,14 +4549,19 @@ export async function purgeAllServerAndTemporaryData(preserveSuperAdmin: boolean
     } catch (e) {}
   }
 
-  // 3. Reset in-memory collection hubs and notify all subscribers with empty array
+  // 4. Reset in-memory collection hubs and notify all subscribers with empty array
+  collectionsToClear.forEach(colName => {
+    setLocalItems(colName, []);
+  });
   collectionHubs.forEach((hub, colName) => {
+    hub.latestData = [];
+    hub.lastUpdated = Date.now();
     hub.callbacks.forEach(cb => {
       try { cb([]); } catch (_) {}
     });
   });
 
-  // 4. Broadcast instant clear to all other tabs and windows
+  // 5. Broadcast instant clear to all other tabs and windows
   if (realTimeSyncChannel) {
     try {
       collectionsToClear.forEach(colName => {
@@ -4302,8 +4571,19 @@ export async function purgeAllServerAndTemporaryData(preserveSuperAdmin: boolean
           timestamp: Date.now()
         });
       });
+      realTimeSyncChannel.postMessage({
+        type: "purge_all",
+        timestamp: Date.now()
+      });
     } catch (_) {}
   }
+
+  // 6. Trigger stats refresh event across the window
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+    }
+  } catch (_) {}
 
   return { deletedCount };
 }

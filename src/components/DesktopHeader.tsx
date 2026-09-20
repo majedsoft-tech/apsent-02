@@ -53,6 +53,45 @@ export default function DesktopHeader({
     return `${weekday} ${year}/${month}/${day}`;
   };
 
+  const isGoogleAuthenticated = Boolean(currentUser && !currentUser.isGuest);
+
+  if (!isGoogleAuthenticated) {
+    return (
+      <header 
+        id="desktop-top-header"
+        className="hidden md:flex items-center justify-between bg-white border-b border-slate-200/90 px-6 py-3 sticky top-0 z-30 shadow-xs"
+        dir="rtl"
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-700 text-white flex items-center justify-center text-base shadow-sm flex-shrink-0">
+            🏫
+          </div>
+          <span className="text-xs font-black text-slate-800">
+            منصة SmartSchool المدرسية
+          </span>
+        </div>
+
+        <div>
+          <button
+            type="button"
+            onClick={onGoogleLogin}
+            id="btn-desktop-google-login"
+            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-xl text-xs font-black shadow-sm transition hover:shadow cursor-pointer"
+            title="تسجيل الدخول بحساب Google"
+          >
+            <svg className="w-4 h-4" viewBox="0 0 24 24">
+              <path
+                fill="#EA4335"
+                d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
+              />
+            </svg>
+            <span>تسجيل الدخول بحساب Google</span>
+          </button>
+        </div>
+      </header>
+    );
+  }
+
   return (
     <header 
       id="desktop-top-header"

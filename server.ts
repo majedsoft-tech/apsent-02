@@ -168,10 +168,22 @@ app.get("/api/sync/attendance", (req, res) => {
 });
 
 app.post("/api/sync/attendance", (req, res) => {
-  const { record, records } = req.body;
-  const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
+  const { record, records, deletedIds, clearAll, schoolCode, userEmail, userId } = req.body;
 
-  if (itemsToProcess.length === 0) {
+  if (clearAll) {
+    attendanceCache = attendanceCache.filter(r => !matchesSchool(r, schoolCode, userEmail, userId));
+    writeJsonFile(ATTENDANCE_FILE, attendanceCache);
+    broadcastSyncEvent("attendance_updated", { records: [], clearAll: true, schoolCode });
+    return res.json({ success: true, count: 0, cleared: true });
+  }
+
+  if (Array.isArray(deletedIds) && deletedIds.length > 0) {
+    const toDelete = new Set(deletedIds);
+    attendanceCache = attendanceCache.filter(r => !toDelete.has(r.id) && !toDelete.has(r.studentId));
+  }
+
+  const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
+  if (itemsToProcess.length === 0 && (!deletedIds || deletedIds.length === 0)) {
     return res.status(400).json({ success: false, error: "No records provided" });
   }
 
@@ -207,10 +219,22 @@ app.get("/api/sync/behaviors", (req, res) => {
 });
 
 app.post("/api/sync/behaviors", (req, res) => {
-  const { record, records } = req.body;
-  const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
+  const { record, records, deletedIds, clearAll, schoolCode, userEmail, userId } = req.body;
 
-  if (itemsToProcess.length === 0) {
+  if (clearAll) {
+    behaviorsCache = behaviorsCache.filter(r => !matchesSchool(r, schoolCode, userEmail, userId));
+    writeJsonFile(BEHAVIORS_FILE, behaviorsCache);
+    broadcastSyncEvent("behavior_updated", { records: [], clearAll: true, schoolCode });
+    return res.json({ success: true, count: 0, cleared: true });
+  }
+
+  if (Array.isArray(deletedIds) && deletedIds.length > 0) {
+    const toDelete = new Set(deletedIds);
+    behaviorsCache = behaviorsCache.filter(r => !toDelete.has(r.id) && !toDelete.has(r.studentId));
+  }
+
+  const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
+  if (itemsToProcess.length === 0 && (!deletedIds || deletedIds.length === 0)) {
     return res.status(400).json({ success: false, error: "No behavior records provided" });
   }
 
@@ -249,10 +273,22 @@ app.get("/api/sync/delays", (req, res) => {
 });
 
 app.post("/api/sync/delays", (req, res) => {
-  const { record, records } = req.body;
-  const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
+  const { record, records, deletedIds, clearAll, schoolCode, userEmail, userId } = req.body;
 
-  if (itemsToProcess.length === 0) {
+  if (clearAll) {
+    delaysCache = delaysCache.filter(r => !matchesSchool(r, schoolCode, userEmail, userId));
+    writeJsonFile(DELAYS_FILE, delaysCache);
+    broadcastSyncEvent("delay_updated", { records: [], clearAll: true, schoolCode });
+    return res.json({ success: true, count: 0, cleared: true });
+  }
+
+  if (Array.isArray(deletedIds) && deletedIds.length > 0) {
+    const toDelete = new Set(deletedIds);
+    delaysCache = delaysCache.filter(r => !toDelete.has(r.id) && !toDelete.has(r.studentId));
+  }
+
+  const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
+  if (itemsToProcess.length === 0 && (!deletedIds || deletedIds.length === 0)) {
     return res.status(400).json({ success: false, error: "No delay records provided" });
   }
 
@@ -292,7 +328,15 @@ app.get("/api/sync/school", (req, res) => {
 });
 
 app.post("/api/sync/school", (req, res) => {
-  const { schoolName, schoolCode, userEmail, userId } = req.body;
+  const { schoolName, schoolCode, userEmail, userId, clearAll } = req.body;
+
+  if (clearAll) {
+    schoolSettingsCache = schoolSettingsCache.filter(s => !matchesSchool(s, schoolCode, userEmail, userId));
+    writeJsonFile(SCHOOL_SETTINGS_FILE, schoolSettingsCache);
+    broadcastSyncEvent("school_updated", { schoolName: "", schoolCode: "", cleared: true });
+    return res.json({ success: true, cleared: true });
+  }
+
   const trimmedName = (schoolName || "").trim();
   const cleanCode = (schoolCode || userEmail || userId || "").trim();
 
@@ -334,8 +378,15 @@ app.get("/api/sync/grades", (req, res) => {
 });
 
 app.post("/api/sync/grades", (req, res) => {
-  const { record, records, deletedIds, schoolCode, userEmail, userId } = req.body;
+  const { record, records, deletedIds, clearAll, schoolCode, userEmail, userId } = req.body;
   let updatedCount = 0;
+
+  if (clearAll) {
+    gradesCache = gradesCache.filter(g => !matchesSchool(g, schoolCode, userEmail, userId));
+    writeJsonFile(GRADES_FILE, gradesCache);
+    broadcastSyncEvent("grades_updated", { records: [], clearAll: true, schoolCode });
+    return res.json({ success: true, count: 0, cleared: true });
+  }
 
   if (Array.isArray(deletedIds) && deletedIds.length > 0) {
     const toDelete = new Set(deletedIds);
@@ -380,12 +431,19 @@ app.get("/api/sync/classes", (req, res) => {
 });
 
 app.post("/api/sync/classes", (req, res) => {
-  const { record, records, deletedIds, schoolCode, userEmail, userId } = req.body;
+  const { record, records, deletedIds, clearAll, schoolCode, userEmail, userId } = req.body;
   let updatedCount = 0;
+
+  if (clearAll) {
+    classesCache = classesCache.filter(c => !matchesSchool(c, schoolCode, userEmail, userId));
+    writeJsonFile(CLASSES_FILE, classesCache);
+    broadcastSyncEvent("classes_updated", { records: [], clearAll: true, schoolCode });
+    return res.json({ success: true, count: 0, cleared: true });
+  }
 
   if (Array.isArray(deletedIds) && deletedIds.length > 0) {
     const toDelete = new Set(deletedIds);
-    classesCache = classesCache.filter(c => !toDelete.has(c.id));
+    classesCache = classesCache.filter(c => !toDelete.has(c.id) && !toDelete.has(c._docId));
   }
 
   const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
@@ -426,12 +484,19 @@ app.get("/api/sync/teachers", (req, res) => {
 });
 
 app.post("/api/sync/teachers", (req, res) => {
-  const { record, records, deletedIds, schoolCode, userEmail, userId } = req.body;
+  const { record, records, deletedIds, clearAll, schoolCode, userEmail, userId } = req.body;
   let updatedCount = 0;
+
+  if (clearAll) {
+    teachersCache = teachersCache.filter(t => !matchesSchool(t, schoolCode, userEmail, userId));
+    writeJsonFile(TEACHERS_FILE, teachersCache);
+    broadcastSyncEvent("teachers_updated", { records: [], clearAll: true, schoolCode });
+    return res.json({ success: true, count: 0, cleared: true });
+  }
 
   if (Array.isArray(deletedIds) && deletedIds.length > 0) {
     const toDelete = new Set(deletedIds);
-    teachersCache = teachersCache.filter(t => !toDelete.has(t.id));
+    teachersCache = teachersCache.filter(t => !toDelete.has(t.id) && !toDelete.has(t._docId) && !toDelete.has(t._origId));
   }
 
   const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
@@ -472,12 +537,19 @@ app.get("/api/sync/students", (req, res) => {
 });
 
 app.post("/api/sync/students", (req, res) => {
-  const { record, records, deletedIds, schoolCode, userEmail, userId } = req.body;
+  const { record, records, deletedIds, clearAll, schoolCode, userEmail, userId } = req.body;
   let updatedCount = 0;
+
+  if (clearAll) {
+    studentsCache = studentsCache.filter(s => !matchesSchool(s, schoolCode, userEmail, userId));
+    writeJsonFile(STUDENTS_FILE, studentsCache);
+    broadcastSyncEvent("students_updated", { records: [], clearAll: true, schoolCode });
+    return res.json({ success: true, count: 0, cleared: true });
+  }
 
   if (Array.isArray(deletedIds) && deletedIds.length > 0) {
     const toDelete = new Set(deletedIds);
-    studentsCache = studentsCache.filter(s => !toDelete.has(s.id));
+    studentsCache = studentsCache.filter(s => !toDelete.has(s.id) && !toDelete.has(s._docId) && !toDelete.has(s._origId));
   }
 
   const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
@@ -538,11 +610,84 @@ app.get("/api/sync/all", (req, res) => {
 });
 
 // ----------------------------------------------------
+// SYNC PURGE ALL (Permanent irreversible server wipe)
+// ----------------------------------------------------
+app.post("/api/sync/purge-all", (req, res) => {
+  const { schoolCode, userEmail, userId, purgeAllGlobally } = req.body || {};
+  const isGlobal = Boolean(purgeAllGlobally || (!schoolCode && !userEmail && !userId));
+
+  if (isGlobal) {
+    gradesCache = [];
+    classesCache = [];
+    teachersCache = [];
+    studentsCache = [];
+    attendanceCache = [];
+    delaysCache = [];
+    behaviorsCache = [];
+    schoolSettingsCache = [];
+
+    writeJsonFile(GRADES_FILE, []);
+    writeJsonFile(CLASSES_FILE, []);
+    writeJsonFile(TEACHERS_FILE, []);
+    writeJsonFile(STUDENTS_FILE, []);
+    writeJsonFile(ATTENDANCE_FILE, []);
+    writeJsonFile(DELAYS_FILE, []);
+    writeJsonFile(BEHAVIORS_FILE, []);
+    writeJsonFile(SCHOOL_SETTINGS_FILE, []);
+  } else {
+    gradesCache = gradesCache.filter(g => !matchesSchool(g, schoolCode, userEmail, userId));
+    classesCache = classesCache.filter(c => !matchesSchool(c, schoolCode, userEmail, userId));
+    teachersCache = teachersCache.filter(t => !matchesSchool(t, schoolCode, userEmail, userId));
+    studentsCache = studentsCache.filter(s => !matchesSchool(s, schoolCode, userEmail, userId));
+    attendanceCache = attendanceCache.filter(a => !matchesSchool(a, schoolCode, userEmail, userId));
+    delaysCache = delaysCache.filter(d => !matchesSchool(d, schoolCode, userEmail, userId));
+    behaviorsCache = behaviorsCache.filter(b => !matchesSchool(b, schoolCode, userEmail, userId));
+    schoolSettingsCache = schoolSettingsCache.filter(s => !matchesSchool(s, schoolCode, userEmail, userId));
+
+    writeJsonFile(GRADES_FILE, gradesCache);
+    writeJsonFile(CLASSES_FILE, classesCache);
+    writeJsonFile(TEACHERS_FILE, teachersCache);
+    writeJsonFile(STUDENTS_FILE, studentsCache);
+    writeJsonFile(ATTENDANCE_FILE, attendanceCache);
+    writeJsonFile(DELAYS_FILE, delaysCache);
+    writeJsonFile(BEHAVIORS_FILE, behaviorsCache);
+    writeJsonFile(SCHOOL_SETTINGS_FILE, schoolSettingsCache);
+  }
+
+  broadcastSyncEvent("purge_all", { isGlobal, schoolCode, userEmail, userId, timestamp: Date.now() });
+
+  res.json({
+    success: true,
+    message: "Data permanently purged from server memory and disk files",
+    timestamp: Date.now()
+  });
+});
+
+// ----------------------------------------------------
 // SYNC BOOTSTRAP (Bulk sync from Admin to Server)
 // ----------------------------------------------------
 app.post("/api/sync/bootstrap", (req, res) => {
-  const { schoolCode, schoolName, userEmail, userId, grades, classes, teachers, students } = req.body;
+  const { schoolCode, schoolName, userEmail, userId, grades, classes, teachers, students, clearFirst } = req.body;
   const cleanCode = (schoolCode || userEmail || userId || "").trim();
+
+  if (clearFirst) {
+    if (Array.isArray(grades)) {
+      gradesCache = gradesCache.filter(g => !matchesSchool(g, cleanCode, userEmail, userId));
+      writeJsonFile(GRADES_FILE, gradesCache);
+    }
+    if (Array.isArray(classes)) {
+      classesCache = classesCache.filter(c => !matchesSchool(c, cleanCode, userEmail, userId));
+      writeJsonFile(CLASSES_FILE, classesCache);
+    }
+    if (Array.isArray(teachers)) {
+      teachersCache = teachersCache.filter(t => !matchesSchool(t, cleanCode, userEmail, userId));
+      writeJsonFile(TEACHERS_FILE, teachersCache);
+    }
+    if (Array.isArray(students)) {
+      studentsCache = studentsCache.filter(s => !matchesSchool(s, cleanCode, userEmail, userId));
+      writeJsonFile(STUDENTS_FILE, studentsCache);
+    }
+  }
 
   if (schoolName) {
     const existingIdx = schoolSettingsCache.findIndex(s => matchesSchool(s, cleanCode, userEmail, userId));

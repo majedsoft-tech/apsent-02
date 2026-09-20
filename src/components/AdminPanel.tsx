@@ -10,8 +10,6 @@ import {
   deleteClass, 
   deleteClassesForGrade,
   deleteAllGradesAndClasses,
-  restoreGradeDefaultClasses,
-  restoreFirstGradeClasses,
   addTeacher, 
   deleteTeacher, 
   deleteTeachersBatch,
@@ -2302,8 +2300,8 @@ export default function AdminPanel({
 
   const handleDeleteClass = (id: string, name: string, gradeId?: string) => {
     confirmAction(
-      "حذف الفصل الدراسي",
-      `هل أنت متأكد من حذف فصل ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
+      "تأكيد حذف الفصل نهائياً",
+      `هل أنت متأكد من حذف فصل ${name} نهائياً؟ سيتم حذف الفصل وجميع الطلاب المسجلين به نهائياً ولن يتم استرجاعها تلقائياً.`,
       async () => {
         try {
           const trimmedName = name.trim();
@@ -2312,7 +2310,7 @@ export default function AdminPanel({
             !(gradeId && c.gradeId === gradeId && c.name?.trim() === trimmedName)
           ));
           setStudents(prev => prev.filter(s => s.classId !== id));
-          showMessage("تم حذف الفصل بنجاح!");
+          showMessage("تم حذف الفصل نهائياً بنجاح!");
           await deleteClass(id, gradeId, name);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
@@ -2432,13 +2430,13 @@ export default function AdminPanel({
       return;
     }
     confirmAction(
-      "حذف الطالب",
-      `هل أنت متأكد من حذف الطالب ${name}؟ لا يمكن التراجع عن هذا الإجراء.`,
+      "تأكيد حذف الطالب نهائياً",
+      `هل أنت متأكد من حذف الطالب ${name} نهائياً؟ سيتم حذف بيانات الطالب نهائياً ولن يتم استرجاعها تلقائياً.`,
       async () => {
         try {
           setSelectedStudentIds(prev => prev.filter(sId => sId !== id));
           setStudents(prev => prev.filter(s => s.id !== id));
-          showMessage("تم حذف الطالب بنجاح!");
+          showMessage("تم حذف الطالب نهائياً بنجاح!");
           await deleteStudent(id);
         } catch (e) {
           showMessage("حدث خطأ أثناء الحذف", "error");
@@ -2454,14 +2452,14 @@ export default function AdminPanel({
     }
     if (selectedStudentIds.length === 0) return;
     confirmAction(
-      "حذف الطلاب المحددين",
-      `هل أنت متأكد من حذف عدد ${selectedStudentIds.length} طالب دفعة واحدة؟ لا يمكن التراجع عن هذا الإجراء وسيتم حذف بياناتهم بشكل كامل.`,
+      "تأكيد حذف الطلاب المحددين نهائياً",
+      `هل أنت متأكد من حذف عدد ${selectedStudentIds.length} طالب نهائياً دفعة واحدة؟ سيتم حذف بياناتهم نهائياً ولن يتم استرجاعها تلقائياً.`,
       async () => {
         try {
           const idsToDelete = [...selectedStudentIds];
           setSelectedStudentIds([]);
           setStudents(prev => prev.filter(s => !idsToDelete.includes(s.id)));
-          showMessage("تم حذف الطلاب المحددين بنجاح!");
+          showMessage("تم حذف الطلاب المحددين نهائياً بنجاح!");
           await deleteStudentsBatch(idsToDelete);
         } catch (e) {
           showMessage("حدث خطأ أثناء حذف الطلاب", "error");
@@ -2902,6 +2900,41 @@ export default function AdminPanel({
   }
 
   // --- MAIN ADMIN SYSTEM DISPLAY (WIDE RESPONSIVE SCREEN) ---
+  if (!isGoogleAuthenticated) {
+    return (
+      <div id="admin-main-panel" className="w-full space-y-6 pb-12">
+        <div className="w-full max-w-lg mx-auto my-12 bg-white rounded-3xl p-6 sm:p-10 border border-slate-200/90 shadow-lg text-center space-y-6 animate-in fade-in">
+          <div className="w-16 h-16 rounded-3xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto text-3xl shadow-inner">
+            🔒
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-lg sm:text-xl font-black text-slate-900">
+              تسجيل الدخول مطلوب
+            </h2>
+            <p className="text-xs sm:text-sm font-medium text-slate-600 leading-relaxed max-w-sm mx-auto">
+              لحماية خصوصية البيانات وسجلات المدرسة والطلاب، يجب تسجيل الدخول بحساب Google لاستعراض بيانات المدرسة.
+            </p>
+          </div>
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={onRequireGoogleLogin}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md shadow-indigo-600/25 transition-all transform hover:scale-[1.02] cursor-pointer"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24">
+                <path
+                  fill="#EA4335"
+                  d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
+                />
+              </svg>
+              <span>تسجيل الدخول بحساب Google</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div id="admin-main-panel" className="w-full space-y-6 pb-12">
       
@@ -4221,59 +4254,6 @@ export default function AdminPanel({
                     الصفوف الدراسية المتاحة ({grades.length})
                   </h3>
                 </div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (setGlobalProgress) {
-                      setGlobalProgress({ active: true, type: "sync", label: "جاري استرجاع فصول الصف الأول..." });
-                    }
-                    try {
-                      let firstGrade = grades.find(g => {
-                        const norm = (g.name || "").trim().toLowerCase();
-                        return norm.includes("اول") || norm.includes("أول") || norm.includes("1");
-                      }) || grades[0];
-
-                      let targetGradeId = firstGrade?.id;
-                      if (!targetGradeId) {
-                        targetGradeId = await addGrade("الصف الأول");
-                        const newGrade = { id: targetGradeId, name: "الصف الأول" };
-                        setGrades(prev => [...prev, newGrade]);
-                      }
-                      
-                      const needed = [1, 2, 3, 4, 5, 6];
-                      const toAdd: { name: string; gradeId: string }[] = [];
-                      needed.forEach(num => {
-                        toAdd.push({ name: `الفصل ${num}`, gradeId: targetGradeId! });
-                      });
-                      
-                      const tempItems = toAdd.map(item => ({
-                        id: `temp_cls_${Date.now()}_${item.name}`,
-                        name: item.name,
-                        gradeId: targetGradeId!
-                      }));
-                      setClasses(prev => [...prev, ...tempItems]);
-                      
-                      const res = await addClassesBatch(toAdd);
-                      setClasses(prev => {
-                        const tempIds = new Set(tempItems.map(t => t.id));
-                        const clean = prev.filter(p => !tempIds.has(p.id));
-                        return [...clean, ...res];
-                      });
-                      
-                      if (setGlobalProgress) {
-                        setGlobalProgress({ active: false, type: null, label: "" });
-                      }
-                    } catch (e) {
-                      if (setGlobalProgress) {
-                        setGlobalProgress({ active: false, type: null, label: "" });
-                      }
-                    }
-                  }}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
-                >
-                  <span>🔄</span>
-                  <span>استرجاع فصول الصف الأول (1-6)</span>
-                </button>
 
                 {grades.length > 0 && (
                   <button
@@ -4392,9 +4372,9 @@ export default function AdminPanel({
                                     }
                                   }}
                                   className="text-[10px] bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold px-2 py-0.5 rounded-md border border-emerald-200 transition cursor-pointer"
-                                  title="استرجاع أو إضافة الفصول من 1 إلى 6 فوراً"
+                                  title="إضافة الفصول من 1 إلى 6 فوراً"
                                 >
-                                  + استرجاع (1-6)
+                                  + إضافة (1-6)
                                 </button>
                                 <button
                                   type="button"
@@ -4482,28 +4462,9 @@ export default function AdminPanel({
                               </div>
                             </div>
                             {gradeClasses.length === 0 && (
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  const needed = [1, 2, 3, 4, 5, 6];
-                                  const toAdd = needed.map(num => ({ name: `الفصل ${num}`, gradeId: grade.id }));
-                                  const tempItems = toAdd.map(item => ({
-                                    id: `temp_cls_${Date.now()}_${item.name}`,
-                                    name: item.name,
-                                    gradeId: grade.id
-                                  }));
-                                  setClasses(prev => [...prev, ...tempItems]);
-                                  const res = await addClassesBatch(toAdd);
-                                  setClasses(prev => {
-                                    const tempIds = new Set(tempItems.map(t => t.id));
-                                    const clean = prev.filter(p => !tempIds.has(p.id));
-                                    return [...clean, ...res];
-                                  });
-                                }}
-                                className="bg-amber-400 hover:bg-amber-500 text-slate-900 text-[11px] px-3 py-1 rounded-lg font-black shadow-2xs cursor-pointer transition flex items-center gap-1"
-                              >
-                                <span>⚠️ فصول هذا الصف فارغة — اضغط هنا لاسترجاع الفصول (1-6) فوراً 👈</span>
-                              </button>
+                              <div className="text-[11px] text-slate-400 font-medium px-1 py-0.5">
+                                لا توجد فصول مضافة في هذا الصف حالياً
+                              </div>
                             )}
                           </div>
 
@@ -4529,13 +4490,20 @@ export default function AdminPanel({
                                   type="button"
                                   onClick={() => {
                                     if (exists && cls) {
-                                      // Instant 0ms optimistic removal
                                       const cName = cls.name?.trim() || `الفصل ${num}`;
-                                      setClasses(prev => prev.filter(c => 
-                                        c.id !== cls.id && 
-                                        !(c.gradeId === grade.id && (c.name?.trim() === cName || c.name?.trim() === `الفصل ${num}` || c.name?.trim() === `${num}`))
-                                      ));
-                                      deleteClass(cls.id, grade.id, cName).catch(() => {});
+                                      confirmAction(
+                                        "تأكيد حذف الفصل نهائياً",
+                                        `هل أنت متأكد من حذف ${cName} نهائياً؟ سيتم حذف الفصل وجميع الطلاب المسجلين به نهائياً ولن يتم استرجاعها تلقائياً.`,
+                                        async () => {
+                                          setClasses(prev => prev.filter(c => 
+                                            c.id !== cls.id && 
+                                            !(c.gradeId === grade.id && (c.name?.trim() === cName || c.name?.trim() === `الفصل ${num}` || c.name?.trim() === `${num}`))
+                                          ));
+                                          setStudents(prev => prev.filter(s => s.classId !== cls.id));
+                                          showMessage(`تم حذف ${cName} بنجاح نهائي!`);
+                                          await deleteClass(cls.id, grade.id, cName).catch(() => {});
+                                        }
+                                      );
                                     } else {
                                       const className = `الفصل ${num}`;
                                       const tempId = `temp_cls_${Date.now()}_${num}`;
@@ -4598,11 +4566,11 @@ export default function AdminPanel({
                     type="button"
                     onClick={() => {
                       confirmAction(
-                        "مسح شامل وإعادة تعيين لكافة بيانات السيرفر والمؤقتة",
-                        "هل أنت متأكد من مسح وتصفير كافة البيانات من السيرفر والتخزين المؤقت نهائياً؟ يشمل ذلك الصفوف، الفصول، الطلاب، المعلمين، وسجلات الغياب والسلوك والتأخر.",
+                        "مسح شامل وتصفير نهائي لكافة بيانات السيرفر والمؤقتة",
+                        "هل أنت متأكد من مسح وتصفير كافة البيانات من السيرفر والتخزين المؤقت وقاعدة البيانات نهائياً؟ يشمل ذلك الصفوف، الفصول، الطلاب، المعلمين، وسجلات الغياب والسلوك والتأخر ولن تعود البيانات السابقة نهائياً.",
                         async () => {
                           if (setGlobalProgress) {
-                            setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وتنظيف كافة بيانات السيرفر والمؤقتة..." });
+                            setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وتنظيف كافة بيانات السيرفر والمؤقتة نهائياً..." });
                           }
                           try {
                             const res = await purgeAllServerAndTemporaryData(true);
@@ -4610,8 +4578,9 @@ export default function AdminPanel({
                             setClasses([]);
                             setStudents([]);
                             setTeachers([]);
-                            showMessage(`تم مسح وتصفير كافة بيانات السيرفر والمؤقتة بنجاح (${res.deletedCount} مستند)!`);
-                            if (onRefreshData) onRefreshData().catch(console.error);
+                            setSelectedStudentIds([]);
+                            showMessage(`تم مسح وتصفير كافة بيانات السيرفر والمؤقتة نهائياً بنجاح (${res.deletedCount} مستند)!`);
+                            if (onRefreshData) await onRefreshData().catch(console.error);
                           } catch (e) {
                             showMessage("حدث خطأ أثناء عملية المسح الشامل", "error");
                           } finally {
@@ -5556,11 +5525,11 @@ export default function AdminPanel({
                       type="button"
                       onClick={() => {
                         confirmAction(
-                          "مسح شامل وإعادة تعيين لكافة بيانات السيرفر والمؤقتة",
-                          "هل أنت متأكد من مسح وتصفير كافة البيانات من السيرفر والتخزين المؤقت نهائياً؟ يشمل ذلك الصفوف، الفصول، الطلاب، المعلمين، وسجلات الغياب والسلوك والتأخر.",
+                          "مسح شامل وتصفير نهائي لكافة بيانات السيرفر والمؤقتة",
+                          "هل أنت متأكد من مسح وتصفير كافة البيانات من السيرفر والتخزين المؤقت وقاعدة البيانات نهائياً؟ يشمل ذلك الصفوف، الفصول، الطلاب، المعلمين، وسجلات الغياب والسلوك والتأخر ولن تعود البيانات السابقة نهائياً.",
                           async () => {
                             if (setGlobalProgress) {
-                              setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وتنظيف كافة بيانات السيرفر والمؤقتة..." });
+                              setGlobalProgress({ active: true, type: "delete", label: "جاري مسح وتنظيف كافة بيانات السيرفر والمؤقتة نهائياً..." });
                             }
                             try {
                               const res = await purgeAllServerAndTemporaryData(true);
@@ -5568,8 +5537,9 @@ export default function AdminPanel({
                               setClasses([]);
                               setStudents([]);
                               setTeachers([]);
-                              showMessage(`تم مسح وتصفير كافة بيانات السيرفر والمؤقتة بنجاح (${res.deletedCount} مستند)!`);
-                              if (onRefreshData) onRefreshData().catch(console.error);
+                              setSelectedStudentIds([]);
+                              showMessage(`تم مسح وتصفير كافة بيانات السيرفر والمؤقتة نهائياً بنجاح (${res.deletedCount} مستند)!`);
+                              if (onRefreshData) await onRefreshData().catch(console.error);
                             } catch (e) {
                               showMessage("حدث خطأ أثناء عملية المسح الشامل", "error");
                             } finally {
