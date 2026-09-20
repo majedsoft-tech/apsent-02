@@ -1,0 +1,156 @@
+{
+  "entities": {
+    "Grade": {
+      "title": "Grade",
+      "description": "A school grade level",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "A class within a grade",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "gradeId": { "type": "string" }
+      },
+      "required": ["name", "gradeId"]
+    },
+    "Teacher": {
+      "title": "Teacher",
+      "description": "A school teacher",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "A school student",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "gradeId": { "type": "string" },
+        "classId": { "type": "string" }
+      },
+      "required": ["name", "gradeId", "classId"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "An attendance record",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "period": { "type": "string" },
+        "gradeId": { "type": "string" },
+        "classId": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "present": { "type": "array" },
+        "absent": { "type": "array" },
+        "isNoAbsence": { "type": "boolean" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["date", "period", "gradeId", "classId", "present", "absent"]
+    },
+    "Behavior": {
+      "title": "Behavior",
+      "description": "A student behavior incident",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "date": { "type": "string" },
+        "period": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "teacherName": { "type": "string" },
+        "violation": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentId", "date", "period", "violation"]
+    },
+    "MorningDelay": {
+      "title": "MorningDelay",
+      "description": "Morning delay tardiness record for a student",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "gradeId": { "type": "string" },
+        "gradeName": { "type": "string" },
+        "classId": { "type": "string" },
+        "className": { "type": "string" },
+        "date": { "type": "string" },
+        "arrivalTime": { "type": "string" },
+        "delayMinutes": { "type": "number" },
+        "reason": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["studentId", "date", "arrivalTime", "reason"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "School settings including school name",
+      "type": "object",
+      "properties": {
+        "schoolName": { "type": "string" }
+      }
+    },
+    "RegisteredUser": {
+      "title": "RegisteredUser",
+      "description": "Registered user profile for school administrators",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "lastLogin": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "schoolName": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "grades/{gradeId}": {
+      "schema": "Grade",
+      "description": "Collection of school grades"
+    },
+    "classes/{classId}": {
+      "schema": "Class",
+      "description": "Collection of school classes"
+    },
+    "teachers/{teacherId}": {
+      "schema": "Teacher",
+      "description": "Collection of school teachers"
+    },
+    "students/{studentId}": {
+      "schema": "Student",
+      "description": "Collection of students"
+    },
+    "attendance/{attendanceId}": {
+      "schema": "Attendance",
+      "description": "Collection of attendance records"
+    },
+    "behaviors/{behaviorId}": {
+      "schema": "Behavior",
+      "description": "Collection of student behavior records"
+    },
+    "morning_delays/{delayId}": {
+      "schema": "MorningDelay",
+      "description": "Collection of morning delay records"
+    },
+    "settings/{settingsId}": {
+      "schema": "Settings",
+      "description": "Collection of school settings"
+    },
+    "registered_users/{userId}": {
+      "schema": "RegisteredUser",
+      "description": "Collection of registered users"
+    }
+  }
+}

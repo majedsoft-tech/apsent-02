@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global catch-all default allow for public access
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

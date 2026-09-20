@@ -1,0 +1,8 @@
+{
+  "name": "Remix Absent",
+  "description": "منظومة الحضور والغياب والتأخر الصباحي المدرسية مع المزامنة السحابية اللحظية",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
