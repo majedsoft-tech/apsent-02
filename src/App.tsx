@@ -519,6 +519,20 @@ export default function App() {
     };
   }, []);
 
+  // Listen for real-time school name broadcast events
+  useEffect(() => {
+    const handleSchoolNameEvent = (e: any) => {
+      const updated = e?.detail;
+      if (typeof updated === "string" && updated.trim().length > 0) {
+        setSchoolName(updated.trim());
+      }
+    };
+    window.addEventListener("school_name_updated", handleSchoolNameEvent);
+    return () => {
+      window.removeEventListener("school_name_updated", handleSchoolNameEvent);
+    };
+  }, []);
+
   // Synchronize registered user profile in Firestore
   useEffect(() => {
     if (currentUser && !currentUser.isGuest) {

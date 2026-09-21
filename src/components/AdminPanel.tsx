@@ -943,19 +943,27 @@ export default function AdminPanel({
   };
 
   // Delete specific student absence or delay record (Instant 0ms update + background sync)
-  const handleDeleteAbsence = async (recordId: string, studentId: string, isAbsentType: boolean) => {
+  const handleDeleteAbsence = async (
+    recordIdOrIds: string | string[], 
+    studentId: string, 
+    isAbsentType: boolean, 
+    entryDate?: string
+  ) => {
     if (!isGoogleAuthenticated) {
       onRequireGoogleLogin?.();
       return;
     }
+    const allRecordIds = Array.isArray(recordIdOrIds) ? recordIdOrIds : [recordIdOrIds];
+    if (allRecordIds.length === 0) return;
+    const primaryRecordId = allRecordIds[0];
     const isNoAbsenceDummy = studentId === "no-absence";
-    const isMorningDelay = recordId.startsWith("delay_") || recordId.startsWith("delay-");
+    const isMorningDelay = primaryRecordId.startsWith("delay_") || primaryRecordId.startsWith("delay-");
     const title = isNoAbsenceDummy ? "حذف التحضير بالكامل" : isMorningDelay ? "حذف التأخر الصباحي" : "حذف تسجيل الغياب";
     const message = isNoAbsenceDummy 
       ? "هل أنت متأكد من رغبتك في حذف سجل التحضير الكامل (حضور الجميع) لهذه الحصة؟"
       : isMorningDelay
       ? "هل أنت متأكد من رغبتك في حذف وإلغاء تسجيل التأخر الصباحي لهذا الطالب؟"
-      : "هل أنت متأكد من رغبتك في حذف تسجيل غياب هذا الطالب من هذه الحصة؟";
+      : "هل أنت متأكد من رغبتك في حذف تسجيل غياب هذا الطالب؟";
 
     confirmAction(
       title,
@@ -969,7 +977,8 @@ export default function AdminPanel({
               if (!Array.isArray(list)) return [];
               return list.filter(item => {
                 if (!item) return false;
-                if (item.recordId !== recordId && item.id !== recordId) return true;
+                const matchRecord = allRecordIds.some(rId => item.recordId === rId || item.id === rId);
+                if (!matchRecord) return true;
                 if (isNoAbsenceDummy) return false;
                 return !(item.studentId === studentId && item.isAbsent === isAbsentType);
               });
@@ -984,7 +993,7 @@ export default function AdminPanel({
 
             return {
               ...prev,
-              absentCount: isAbsentType ? Math.max(0, (prev.absentCount || 0) - 1) : (prev.absentCount || 0),
+              absentCount: isAbsentType ? Math.max(0, (prev.absentCount || 0) - allRecordIds.length) : (prev.absentCount || 0),
               grade1Entries: filterEntries(prev.grade1Entries),
               grade2Entries: filterEntries(prev.grade2Entries),
               grade3Entries: filterEntries(prev.grade3Entries),
@@ -997,7 +1006,8 @@ export default function AdminPanel({
             if (!Array.isArray(prev)) return [];
             return prev.filter(item => {
               if (!item) return false;
-              if (item.recordId !== recordId && item.id !== recordId) return true;
+              const matchRecord = allRecordIds.some(rId => item.recordId === rId || item.id === rId);
+              if (!matchRecord) return true;
               if (isNoAbsenceDummy) return false;
               return !(item.studentId === studentId && item.isAbsent === isAbsentType);
             });
@@ -1006,15 +1016,15 @@ export default function AdminPanel({
           // Update cached refs
           if (isMorningDelay) {
             if (Array.isArray(cachedDelaysRef.current)) {
-              cachedDelaysRef.current = cachedDelaysRef.current.filter(r => r && r.id !== recordId && r.studentId !== studentId);
+              cachedDelaysRef.current = cachedDelaysRef.current.filter(r => r && !allRecordIds.includes(r.id) && !(studentId && r.studentId === studentId));
             }
-            setMorningDelaysList(prev => prev.filter(r => r.id !== recordId && r.studentId !== studentId));
+            setMorningDelaysList(prev => prev.filter(r => !allRecordIds.includes(r.id) && !(studentId && r.studentId === studentId)));
           } else if (Array.isArray(cachedAttendanceRef.current)) {
             if (isNoAbsenceDummy) {
-              cachedAttendanceRef.current = cachedAttendanceRef.current.filter(r => r && r.id !== recordId);
+              cachedAttendanceRef.current = cachedAttendanceRef.current.filter(r => r && !allRecordIds.includes(r.id));
             } else {
               cachedAttendanceRef.current = cachedAttendanceRef.current.map(r => {
-                if (!r || r.id !== recordId) return r;
+                if (!r || !allRecordIds.includes(r.id)) return r;
                 return {
                   ...r,
                   absent: isAbsentType && Array.isArray(r.absent) ? r.absent.filter(id => id !== studentId) : r.absent,
@@ -1026,13 +1036,22 @@ export default function AdminPanel({
 
           showMessage(isMorningDelay ? "تم حذف تسجيل التأخر الصباحي بنجاح!" : "تم حذف تسجيل الغياب بنجاح!");
 
-          // 2. Perform local-first database update and non-blocking background sync
-          if (isMorningDelay) {
-            await deleteMorningDelayRecord(recordId, { studentId, date: getTodayDateString() });
-          } else if (isNoAbsenceDummy) {
-            await deleteAttendanceRecord(recordId);
-          } else {
-            await deleteAttendanceEntry(recordId, studentId, isAbsentType);
+          // 2. Perform local-first database update and non-blocking background sync for each record ID
+          for (const rId of allRecordIds) {
+            if (rId.startsWith("delay_") || rId.startsWith("delay-")) {
+              let targetDate = entryDate;
+              if (!targetDate && rId.startsWith("delay_")) {
+                const parts = rId.split("_");
+                const dateIdx = parts.findIndex(p => /^\d{4}-\d{2}-\d{2}$/.test(p));
+                if (dateIdx !== -1) targetDate = parts[dateIdx];
+              }
+              if (!targetDate) targetDate = getTodayDateString();
+              await deleteMorningDelayRecord(rId, { studentId, date: targetDate });
+            } else if (isNoAbsenceDummy) {
+              await deleteAttendanceRecord(rId);
+            } else {
+              await deleteAttendanceEntry(rId, studentId, isAbsentType);
+            }
           }
         } catch (e) {
           console.error("Error deleting absence/delay:", e);
@@ -3356,13 +3375,8 @@ export default function AdminPanel({
                                       <button
                                         type="button"
                                         onClick={() => {
-                                          if (entry.recordIds && entry.recordIds.length > 0) {
-                                            entry.recordIds.forEach((rId: string) => {
-                                              handleDeleteAbsence(rId, entry.studentId, entry.isAbsent);
-                                            });
-                                          } else {
-                                            handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent);
-                                          }
+                                          const ids = (entry.recordIds && entry.recordIds.length > 0) ? entry.recordIds : [entry.recordId];
+                                          handleDeleteAbsence(ids, entry.studentId, entry.isAbsent, entry.date);
                                         }}
                                         className="text-slate-400 hover:text-rose-600 p-0.5 rounded hover:bg-slate-100 transition cursor-pointer"
                                         title="حذف هذا التسجيل"
@@ -3437,13 +3451,8 @@ export default function AdminPanel({
                                   <button
                                     type="button"
                                     onClick={() => {
-                                      if (entry.recordIds && entry.recordIds.length > 0) {
-                                        entry.recordIds.forEach((rId: string) => {
-                                          handleDeleteAbsence(rId, entry.studentId, entry.isAbsent);
-                                        });
-                                      } else {
-                                        handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent);
-                                      }
+                                      const ids = (entry.recordIds && entry.recordIds.length > 0) ? entry.recordIds : [entry.recordId];
+                                      handleDeleteAbsence(ids, entry.studentId, entry.isAbsent, entry.date);
                                     }}
                                     className="text-slate-400 hover:text-rose-600 p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-lg active:bg-rose-50"
                                     title="حذف هذا التسجيل"
@@ -3975,7 +3984,7 @@ export default function AdminPanel({
                             <td className="py-2 px-3 text-center">
                               <button
                                 type="button"
-                                onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent)}
+                                onClick={() => handleDeleteAbsence(entry.recordId, entry.studentId, entry.isAbsent, entry.date)}
                                 className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-slate-100 transition cursor-pointer"
                                 title="حذف هذا تسجيل الغياب"
                               >

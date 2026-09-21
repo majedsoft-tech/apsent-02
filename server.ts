@@ -177,20 +177,21 @@ app.post("/api/sync/attendance", (req, res) => {
     return res.json({ success: true, count: 0, cleared: true });
   }
 
-  if (Array.isArray(deletedIds) && deletedIds.length > 0) {
-    const toDelete = new Set(deletedIds);
-    attendanceCache = attendanceCache.filter(r => !toDelete.has(r.id) && !toDelete.has(r.studentId));
+  const deletedList = Array.isArray(deletedIds) ? deletedIds : [];
+  if (deletedList.length > 0) {
+    const toDelete = new Set(deletedList);
+    attendanceCache = attendanceCache.filter(r => !toDelete.has(r.id) && !toDelete.has(r._docId) && !toDelete.has(r.studentId));
   }
 
   const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
-  if (itemsToProcess.length === 0 && (!deletedIds || deletedIds.length === 0)) {
+  if (itemsToProcess.length === 0 && deletedList.length === 0) {
     return res.status(400).json({ success: false, error: "No records provided" });
   }
 
   let updatedCount = 0;
   for (const item of itemsToProcess) {
     if (!item || !item.id) continue;
-    const existingIdx = attendanceCache.findIndex(r => r.id === item.id);
+    const existingIdx = attendanceCache.findIndex(r => r.id === item.id || (item._docId && r.id === item._docId));
     if (existingIdx >= 0) {
       attendanceCache[existingIdx] = { ...attendanceCache[existingIdx], ...item, updatedAt: Date.now() };
     } else {
@@ -202,8 +203,8 @@ app.post("/api/sync/attendance", (req, res) => {
   // Persist to disk asynchronously
   writeJsonFile(ATTENDANCE_FILE, attendanceCache);
 
-  // Broadcast to all connected clients immediately
-  broadcastSyncEvent("attendance_updated", itemsToProcess);
+  // Broadcast to all connected clients immediately (with deletedIds and records)
+  broadcastSyncEvent("attendance_updated", { records: itemsToProcess, deletedIds: deletedList, schoolCode });
 
   res.json({ success: true, updatedCount });
 });
@@ -228,20 +229,21 @@ app.post("/api/sync/behaviors", (req, res) => {
     return res.json({ success: true, count: 0, cleared: true });
   }
 
-  if (Array.isArray(deletedIds) && deletedIds.length > 0) {
-    const toDelete = new Set(deletedIds);
-    behaviorsCache = behaviorsCache.filter(r => !toDelete.has(r.id) && !toDelete.has(r.studentId));
+  const deletedList = Array.isArray(deletedIds) ? deletedIds : [];
+  if (deletedList.length > 0) {
+    const toDelete = new Set(deletedList);
+    behaviorsCache = behaviorsCache.filter(r => !toDelete.has(r.id) && !toDelete.has(r._docId) && !toDelete.has(r.studentId));
   }
 
   const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
-  if (itemsToProcess.length === 0 && (!deletedIds || deletedIds.length === 0)) {
+  if (itemsToProcess.length === 0 && deletedList.length === 0) {
     return res.status(400).json({ success: false, error: "No behavior records provided" });
   }
 
   let updatedCount = 0;
   for (const item of itemsToProcess) {
     if (!item || !item.id) continue;
-    const existingIdx = behaviorsCache.findIndex(r => r.id === item.id);
+    const existingIdx = behaviorsCache.findIndex(r => r.id === item.id || (item._docId && r.id === item._docId));
     if (existingIdx >= 0) {
       behaviorsCache[existingIdx] = { ...behaviorsCache[existingIdx], ...item, updatedAt: Date.now() };
     } else {
@@ -251,7 +253,7 @@ app.post("/api/sync/behaviors", (req, res) => {
   }
 
   writeJsonFile(BEHAVIORS_FILE, behaviorsCache);
-  broadcastSyncEvent("behavior_updated", itemsToProcess);
+  broadcastSyncEvent("behavior_updated", { records: itemsToProcess, deletedIds: deletedList, schoolCode });
 
   res.json({ success: true, updatedCount });
 });
@@ -273,7 +275,7 @@ app.get("/api/sync/delays", (req, res) => {
 });
 
 app.post("/api/sync/delays", (req, res) => {
-  const { record, records, deletedIds, clearAll, schoolCode, userEmail, userId } = req.body;
+  const { record, records, deletedIds, studentId, date, clearAll, schoolCode, userEmail, userId } = req.body;
 
   if (clearAll) {
     delaysCache = delaysCache.filter(r => !matchesSchool(r, schoolCode, userEmail, userId));
@@ -282,20 +284,28 @@ app.post("/api/sync/delays", (req, res) => {
     return res.json({ success: true, count: 0, cleared: true });
   }
 
-  if (Array.isArray(deletedIds) && deletedIds.length > 0) {
-    const toDelete = new Set(deletedIds);
-    delaysCache = delaysCache.filter(r => !toDelete.has(r.id) && !toDelete.has(r.studentId));
+  const deletedList = Array.isArray(deletedIds) ? deletedIds : [];
+  const targetStudentId = (studentId || "").trim();
+  const targetDate = (date || "").trim();
+
+  if (deletedList.length > 0 || (targetStudentId && targetDate)) {
+    const toDelete = new Set(deletedList);
+    delaysCache = delaysCache.filter(r => {
+      if (toDelete.has(r.id) || (r._docId && toDelete.has(r._docId))) return false;
+      if (targetStudentId && targetDate && r.studentId === targetStudentId && r.date === targetDate) return false;
+      return true;
+    });
   }
 
   const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
-  if (itemsToProcess.length === 0 && (!deletedIds || deletedIds.length === 0)) {
+  if (itemsToProcess.length === 0 && deletedList.length === 0 && (!targetStudentId || !targetDate)) {
     return res.status(400).json({ success: false, error: "No delay records provided" });
   }
 
   let updatedCount = 0;
   for (const item of itemsToProcess) {
     if (!item || !item.id) continue;
-    const existingIdx = delaysCache.findIndex(r => r.id === item.id);
+    const existingIdx = delaysCache.findIndex(r => r.id === item.id || (item._docId && r.id === item._docId));
     if (existingIdx >= 0) {
       delaysCache[existingIdx] = { ...delaysCache[existingIdx], ...item, updatedAt: Date.now() };
     } else {
@@ -305,7 +315,13 @@ app.post("/api/sync/delays", (req, res) => {
   }
 
   writeJsonFile(DELAYS_FILE, delaysCache);
-  broadcastSyncEvent("delay_updated", itemsToProcess);
+  broadcastSyncEvent("delay_updated", {
+    records: itemsToProcess,
+    deletedIds: deletedList,
+    studentId: targetStudentId,
+    date: targetDate,
+    schoolCode
+  });
 
   res.json({ success: true, updatedCount });
 });
@@ -318,7 +334,7 @@ app.get("/api/sync/school", (req, res) => {
   const email = ((req.query.email as string) || "").toLowerCase().trim();
   const uid = ((req.query.uid as string) || "").trim();
 
-  const match = schoolSettingsCache.find(s => matchesSchool(s, schoolCode, email, uid));
+  const match = schoolSettingsCache.find(s => matchesSchool(s, schoolCode, email, uid)) || (schoolSettingsCache.length > 0 ? schoolSettingsCache[0] : null);
   res.json({
     success: true,
     schoolName: match?.schoolName || "",
@@ -338,11 +354,7 @@ app.post("/api/sync/school", (req, res) => {
   }
 
   const trimmedName = (schoolName || "").trim();
-  const cleanCode = (schoolCode || userEmail || userId || "").trim();
-
-  if (!cleanCode) {
-    return res.status(400).json({ success: false, error: "Missing schoolCode/user identifier" });
-  }
+  const cleanCode = (schoolCode || userEmail || userId || "default_school").trim();
 
   const existingIdx = schoolSettingsCache.findIndex(s => matchesSchool(s, cleanCode, userEmail, userId));
   const newSetting = {

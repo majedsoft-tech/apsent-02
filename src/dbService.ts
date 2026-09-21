@@ -122,23 +122,63 @@ export const CLASS_ID_FALLBACK_MAP: Record<string, { classId: string; gradeId: s
 // PERMANENT DELETION TOMBSTONE (Never restore deleted data)
 // ----------------------------------------------------
 const DELETED_ENTITIES_KEY = "apsent_deleted_entities_record_v1";
+const DELETED_ATTENDANCE_ENTRIES_KEY = "apsent_deleted_att_entries_v1";
+const DELETED_DELAYS_KEY = "apsent_deleted_delays_v1";
 
-export function recordDeletedId(type: "classes" | "grades" | "students" | "teachers", id: string): void {
-  if (typeof window === "undefined" || !id) return;
+export type SupportedEntityType = "classes" | "grades" | "students" | "teachers" | "attendance" | "morning_delays" | "behaviors" | string;
+
+// In-memory sets for 0ms synchronous lookups
+const memoryDeletedEntities = new Set<string>();
+const memoryDeletedAttEntries = new Set<string>();
+const memoryDeletedDelays = new Set<string>();
+
+// Bootstrap memory sets from localStorage
+if (typeof window !== "undefined") {
+  try {
+    const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) arr.forEach(k => memoryDeletedEntities.add(k));
+    }
+  } catch (_) {}
+  try {
+    const raw = localStorage.getItem(DELETED_ATTENDANCE_ENTRIES_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) arr.forEach(k => memoryDeletedAttEntries.add(k));
+    }
+  } catch (_) {}
+  try {
+    const raw = localStorage.getItem(DELETED_DELAYS_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) arr.forEach(k => memoryDeletedDelays.add(k));
+    }
+  } catch (_) {}
+}
+
+export function recordDeletedId(type: SupportedEntityType, id: string): void {
+  if (!id) return;
+  const itemKey = `${type}:${id}`;
+  memoryDeletedEntities.add(itemKey);
+  if (typeof window === "undefined") return;
   try {
     const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
     const list: string[] = raw ? JSON.parse(raw) : [];
-    const itemKey = `${type}:${id}`;
     if (!list.includes(itemKey)) {
       list.push(itemKey);
-      if (list.length > 5000) list.shift();
+      if (list.length > 10000) list.shift();
       localStorage.setItem(DELETED_ENTITIES_KEY, JSON.stringify(list));
     }
   } catch (_) {}
 }
 
-export function recordDeletedIds(type: "classes" | "grades" | "students" | "teachers", ids: string[]): void {
-  if (typeof window === "undefined" || !Array.isArray(ids) || ids.length === 0) return;
+export function recordDeletedIds(type: SupportedEntityType, ids: string[]): void {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+  ids.forEach(id => {
+    if (id) memoryDeletedEntities.add(`${type}:${id}`);
+  });
+  if (typeof window === "undefined") return;
   try {
     const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
     const list: string[] = raw ? JSON.parse(raw) : [];
@@ -147,32 +187,156 @@ export function recordDeletedIds(type: "classes" | "grades" | "students" | "teac
       if (id) set.add(`${type}:${id}`);
     });
     const updated = Array.from(set);
-    if (updated.length > 5000) updated.splice(0, updated.length - 5000);
+    if (updated.length > 10000) updated.splice(0, updated.length - 10000);
     localStorage.setItem(DELETED_ENTITIES_KEY, JSON.stringify(updated));
   } catch (_) {}
 }
 
-export function isIdDeleted(type: "classes" | "grades" | "students" | "teachers", id: string): boolean {
-  if (typeof window === "undefined" || !id) return false;
+export function isIdDeleted(type: SupportedEntityType, id: string): boolean {
+  if (!id) return false;
+  const itemKey = `${type}:${id}`;
+  if (memoryDeletedEntities.has(itemKey)) return true;
+  if (typeof window === "undefined") return false;
   try {
     const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
     if (!raw) return false;
     const list: string[] = JSON.parse(raw);
-    return list.includes(`${type}:${id}`);
+    if (list.includes(itemKey)) {
+      memoryDeletedEntities.add(itemKey);
+      return true;
+    }
+    return false;
   } catch (_) {
     return false;
   }
 }
 
-export function unmarkDeletedId(type: "classes" | "grades" | "students" | "teachers", id: string): void {
-  if (typeof window === "undefined" || !id) return;
+export function unmarkDeletedId(type: SupportedEntityType, id: string): void {
+  if (!id) return;
+  const itemKey = `${type}:${id}`;
+  memoryDeletedEntities.delete(itemKey);
+  if (typeof window === "undefined") return;
   try {
     const raw = localStorage.getItem(DELETED_ENTITIES_KEY);
     if (!raw) return;
     let list: string[] = JSON.parse(raw);
-    list = list.filter(item => item !== `${type}:${id}`);
+    list = list.filter(item => item !== itemKey);
     localStorage.setItem(DELETED_ENTITIES_KEY, JSON.stringify(list));
   } catch (_) {}
+}
+
+// Attendance Entry-level tombstones (e.g. deleting specific student absence from period record)
+export function recordDeletedAttendanceEntry(recordId: string, studentId: string, isAbsent: boolean): void {
+  if (!recordId || !studentId) return;
+  const kind = isAbsent ? "abs" : "late";
+  const key = `${recordId}:${studentId}:${kind}`;
+  memoryDeletedAttEntries.add(key);
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem(DELETED_ATTENDANCE_ENTRIES_KEY);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    if (!list.includes(key)) {
+      list.push(key);
+      if (list.length > 10000) list.shift();
+      localStorage.setItem(DELETED_ATTENDANCE_ENTRIES_KEY, JSON.stringify(list));
+    }
+  } catch (_) {}
+}
+
+export function isAttendanceEntryDeleted(recordId: string, studentId: string, isAbsent: boolean): boolean {
+  if (!recordId || !studentId) return false;
+  const kind = isAbsent ? "abs" : "late";
+  const key = `${recordId}:${studentId}:${kind}`;
+  if (memoryDeletedAttEntries.has(key)) return true;
+  // Also check generic slot matches if recordId has prefixes
+  for (const item of memoryDeletedAttEntries) {
+    if (item.endsWith(`:${studentId}:${kind}`)) {
+      const parts = item.split(":");
+      const storedRecId = parts[0];
+      if (recordId.includes(storedRecId) || storedRecId.includes(recordId)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Morning Delay tombstones by (date, studentId)
+export function recordDeletedMorningDelay(date: string, studentId: string): void {
+  if (!date || !studentId) return;
+  const key = `${date}:${studentId}`;
+  memoryDeletedDelays.add(key);
+  recordDeletedId("morning_delays", `delay_${date}_${studentId}`);
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem(DELETED_DELAYS_KEY);
+    const list: string[] = raw ? JSON.parse(raw) : [];
+    if (!list.includes(key)) {
+      list.push(key);
+      if (list.length > 10000) list.shift();
+      localStorage.setItem(DELETED_DELAYS_KEY, JSON.stringify(list));
+    }
+  } catch (_) {}
+}
+
+export function isMorningDelayDeleted(date?: string, studentId?: string): boolean {
+  if (!date || !studentId) return false;
+  const key = `${date}:${studentId}`;
+  if (memoryDeletedDelays.has(key)) return true;
+  if (isIdDeleted("morning_delays", `delay_${date}_${studentId}`)) return true;
+  return false;
+}
+
+// Helper to sanitize an attendance record against deleted student absences/lates
+export function sanitizeAttendanceRecord(record: any): any {
+  if (!record) return record;
+  const rId = record.id || record._docId || "";
+  let absent = Array.isArray(record.absent) ? [...record.absent] : [];
+  let late = Array.isArray(record.late) ? [...record.late] : [];
+  let present = Array.isArray(record.present) ? [...record.present] : [];
+
+  let changed = false;
+  if (rId) {
+    absent = absent.filter(sId => {
+      if (isAttendanceEntryDeleted(rId, sId, true)) {
+        changed = true;
+        if (!present.includes(sId)) present.push(sId);
+        return false;
+      }
+      return true;
+    });
+    late = late.filter(sId => {
+      if (isAttendanceEntryDeleted(rId, sId, false)) {
+        changed = true;
+        if (!present.includes(sId)) present.push(sId);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  if (changed) {
+    return {
+      ...record,
+      absent,
+      late,
+      present,
+      isNoAbsence: absent.length === 0 && late.length === 0
+    };
+  }
+  return record;
+}
+
+export function isRecordTombstoned(colName: string, item: any): boolean {
+  if (!item) return true;
+  const id = item.id || item._docId || item._origId;
+  if (id && isIdDeleted(colName, id)) return true;
+
+  if (colName === MORNING_DELAYS_COLL) {
+    if (isMorningDelayDeleted(item.date, item.studentId)) return true;
+    if (id && isMorningDelayDeleted(undefined, id)) return true;
+  }
+  return false;
 }
 
 export function normalizeStudentData(student: any): any {
@@ -691,30 +855,79 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
     realTimeSyncChannel = new BroadcastChannel("school_realtime_instant_sync");
     realTimeSyncChannel.onmessage = (event) => {
       const data = event.data;
-      if (data && data.colName) {
-        const eff = getEffectiveUidAndEmail();
-        const myEmail = (eff.email || "").toLowerCase().trim();
-        const myUid = (eff.uid || "").trim();
-        const mySchoolCode = getSchoolCode().toLowerCase().trim();
-        const msgEmail = (data.ownerEmail || "").toLowerCase().trim();
-        const msgUid = (data.ownerUid || "").trim();
-        const msgSchoolCode = (data.schoolCode || "").toLowerCase().trim();
+      if (!data) return;
 
-        // Enforce strict tenant isolation: only accept broadcasts if matching current email, UID, alias, schoolCode, or current context
-        const isMatch = (mySchoolCode && msgSchoolCode && mySchoolCode === msgSchoolCode) ||
-                        (mySchoolCode && msgEmail && mySchoolCode === msgEmail) ||
-                        (myEmail && msgSchoolCode && myEmail === msgSchoolCode) ||
-                        (mySchoolCode && msgUid && mySchoolCode === msgUid) ||
-                        (myUid && msgSchoolCode && myUid === msgSchoolCode) ||
-                        (myEmail && msgEmail && myEmail === msgEmail) || 
-                        (myUid && msgUid && myUid === msgUid) ||
-                        (myEmail && msgUid && userProfileAliasCache.get(myEmail)?.uid === msgUid) ||
-                        (myUid && msgEmail && userProfileAliasCache.get(myUid.toLowerCase())?.email === msgEmail) ||
-                        (!myEmail && !myUid && (msgEmail || msgUid || msgSchoolCode));
+      const eff = getEffectiveUidAndEmail();
+      const myEmail = (eff.email || "").toLowerCase().trim();
+      const myUid = (eff.uid || "").trim();
+      const mySchoolCode = getSchoolCode().toLowerCase().trim();
+      const msgEmail = (data.ownerEmail || "").toLowerCase().trim();
+      const msgUid = (data.ownerUid || "").trim();
+      const msgSchoolCode = (data.schoolCode || "").toLowerCase().trim();
 
-        if (isMatch) {
-          notifyCollectionSubscribers(data.colName, data.items, true);
+      const isMatch = (mySchoolCode && msgSchoolCode && mySchoolCode === msgSchoolCode) ||
+                      (mySchoolCode && msgEmail && mySchoolCode === msgEmail) ||
+                      (myEmail && msgSchoolCode && myEmail === msgSchoolCode) ||
+                      (mySchoolCode && msgUid && mySchoolCode === msgUid) ||
+                      (myUid && msgSchoolCode && myUid === msgSchoolCode) ||
+                      (myEmail && msgEmail && myEmail === msgEmail) || 
+                      (myUid && msgUid && myUid === msgUid) ||
+                      (myEmail && msgUid && userProfileAliasCache.get(myEmail)?.uid === msgUid) ||
+                      (myUid && msgEmail && userProfileAliasCache.get(myUid.toLowerCase())?.email === msgEmail) ||
+                      (!myEmail && !myUid && (msgEmail || msgUid || msgSchoolCode));
+
+      if (!isMatch) return;
+
+      if (data.type === "school_name_updated") {
+        const newName = (data.schoolName || "").trim();
+        if (newName) {
+          if (myEmail) localStorage.setItem(`school_name_${myEmail}`, newName);
+          if (myUid) localStorage.setItem(`school_name_${myUid}`, newName);
+          localStorage.setItem("school_name_cache", newName);
+          localStorage.setItem("school_name_cached", newName);
+          try {
+            window.dispatchEvent(new CustomEvent("school_name_updated", { detail: newName }));
+          } catch (_) {}
         }
+        return;
+      }
+
+      if (data.type === "attendance_deleted") {
+        if (Array.isArray(data.deletedIds)) {
+          data.deletedIds.forEach((delId: string) => {
+            recordDeletedId(ATTENDANCE_COLL, delId);
+            removeLocalItemsBy(ATTENDANCE_COLL, r => r.id === delId || r._docId === delId);
+          });
+        }
+        return;
+      }
+
+      if (data.type === "attendance_entry_deleted") {
+        if (data.recordId && data.studentId) {
+          recordDeletedAttendanceEntry(data.recordId, data.studentId, data.isAbsentType);
+          if (data.updatedRecord) {
+            saveOrUpdateLocalItem(ATTENDANCE_COLL, data.updatedRecord);
+          }
+        }
+        return;
+      }
+
+      if (data.type === "delay_deleted") {
+        if (Array.isArray(data.deletedIds)) {
+          data.deletedIds.forEach((delId: string) => {
+            recordDeletedId(MORNING_DELAYS_COLL, delId);
+            removeLocalItemsBy(MORNING_DELAYS_COLL, d => d.id === delId || d._docId === delId);
+          });
+        }
+        if (data.studentId && data.date) {
+          recordDeletedMorningDelay(data.date, data.studentId);
+          removeLocalItemsBy(MORNING_DELAYS_COLL, d => d.studentId === data.studentId && d.date === data.date);
+        }
+        return;
+      }
+
+      if (data.colName) {
+        notifyCollectionSubscribers(data.colName, data.items, true);
       }
     };
   } catch (e) {}
@@ -804,24 +1017,63 @@ export function initServerSyncEngine(): void {
             setLocalItems(ATTENDANCE_COLL, []);
             notifyCollectionSubscribers(ATTENDANCE_COLL, []);
           } else {
-            const items = Array.isArray(payload.data) ? payload.data : [payload.data];
-            bulkSaveOrUpdateLocalItems(ATTENDANCE_COLL, items);
+            if (Array.isArray(payload.data?.deletedIds)) {
+              payload.data.deletedIds.forEach((delId: string) => {
+                recordDeletedId(ATTENDANCE_COLL, delId);
+                removeLocalItemsBy(ATTENDANCE_COLL, r => r.id === delId || r._docId === delId);
+              });
+            }
+            const items = Array.isArray(payload.data?.records) 
+              ? payload.data.records 
+              : (Array.isArray(payload.data) ? payload.data : (payload.data ? [payload.data] : []));
+            const sanitized = items
+              .filter((item: any) => item && item.id && !isIdDeleted(ATTENDANCE_COLL, item.id))
+              .map((item: any) => sanitizeAttendanceRecord(item));
+            if (sanitized.length > 0) {
+              bulkSaveOrUpdateLocalItems(ATTENDANCE_COLL, sanitized);
+            }
           }
         } else if (payload.type === "behavior_updated") {
           if (payload.data?.clearAll) {
             setLocalItems(BEHAVIORS_COLL, []);
             notifyCollectionSubscribers(BEHAVIORS_COLL, []);
           } else {
-            const items = Array.isArray(payload.data) ? payload.data : [payload.data];
-            bulkSaveOrUpdateLocalItems(BEHAVIORS_COLL, items);
+            if (Array.isArray(payload.data?.deletedIds)) {
+              payload.data.deletedIds.forEach((delId: string) => {
+                recordDeletedId(BEHAVIORS_COLL, delId);
+                removeLocalItemsBy(BEHAVIORS_COLL, b => b.id === delId || b._docId === delId);
+              });
+            }
+            const items = Array.isArray(payload.data?.records)
+              ? payload.data.records
+              : (Array.isArray(payload.data) ? payload.data : (payload.data ? [payload.data] : []));
+            const valid = items.filter((b: any) => b && b.id && !isIdDeleted(BEHAVIORS_COLL, b.id));
+            if (valid.length > 0) {
+              bulkSaveOrUpdateLocalItems(BEHAVIORS_COLL, valid);
+            }
           }
         } else if (payload.type === "delay_updated") {
           if (payload.data?.clearAll) {
             setLocalItems(MORNING_DELAYS_COLL, []);
             notifyCollectionSubscribers(MORNING_DELAYS_COLL, []);
           } else {
-            const items = Array.isArray(payload.data) ? payload.data : [payload.data];
-            bulkSaveOrUpdateLocalItems(MORNING_DELAYS_COLL, items);
+            if (Array.isArray(payload.data?.deletedIds)) {
+              payload.data.deletedIds.forEach((delId: string) => {
+                recordDeletedId(MORNING_DELAYS_COLL, delId);
+                removeLocalItemsBy(MORNING_DELAYS_COLL, d => d.id === delId || d._docId === delId);
+              });
+            }
+            if (payload.data?.studentId && payload.data?.date) {
+              recordDeletedMorningDelay(payload.data.date, payload.data.studentId);
+              removeLocalItemsBy(MORNING_DELAYS_COLL, d => d.studentId === payload.data.studentId && d.date === payload.data.date);
+            }
+            const items = Array.isArray(payload.data?.records)
+              ? payload.data.records
+              : (Array.isArray(payload.data) ? payload.data : (payload.data ? [payload.data] : []));
+            const valid = items.filter((d: any) => d && d.id && !isIdDeleted(MORNING_DELAYS_COLL, d.id) && !isMorningDelayDeleted(d.date, d.studentId));
+            if (valid.length > 0) {
+              bulkSaveOrUpdateLocalItems(MORNING_DELAYS_COLL, valid);
+            }
           }
         } else if (payload.type === "school_updated") {
           if (payload.data?.cleared) {
@@ -849,11 +1101,13 @@ export function initServerSyncEngine(): void {
           } else {
             if (Array.isArray(payload.data?.deletedIds)) {
               payload.data.deletedIds.forEach((delId: string) => {
+                recordDeletedId(GRADES_COLL, delId);
                 removeLocalItemsBy(GRADES_COLL, g => g.id === delId || g._docId === delId);
               });
             }
             if (Array.isArray(payload.data?.records)) {
-              bulkSaveOrUpdateLocalItems(GRADES_COLL, payload.data.records);
+              const valid = payload.data.records.filter((g: any) => g && g.id && !isIdDeleted(GRADES_COLL, g.id));
+              bulkSaveOrUpdateLocalItems(GRADES_COLL, valid);
             }
           }
         } else if (payload.type === "classes_updated") {
@@ -863,11 +1117,13 @@ export function initServerSyncEngine(): void {
           } else {
             if (Array.isArray(payload.data?.deletedIds)) {
               payload.data.deletedIds.forEach((delId: string) => {
+                recordDeletedId(CLASSES_COLL, delId);
                 removeLocalItemsBy(CLASSES_COLL, c => c.id === delId || c._docId === delId);
               });
             }
             if (Array.isArray(payload.data?.records)) {
-              bulkSaveOrUpdateLocalItems(CLASSES_COLL, payload.data.records);
+              const valid = payload.data.records.filter((c: any) => c && c.id && !isIdDeleted(CLASSES_COLL, c.id));
+              bulkSaveOrUpdateLocalItems(CLASSES_COLL, valid);
             }
           }
         } else if (payload.type === "teachers_updated") {
@@ -877,11 +1133,13 @@ export function initServerSyncEngine(): void {
           } else {
             if (Array.isArray(payload.data?.deletedIds)) {
               payload.data.deletedIds.forEach((delId: string) => {
+                recordDeletedId(TEACHERS_COLL, delId);
                 removeLocalItemsBy(TEACHERS_COLL, t => t.id === delId || t._docId === delId);
               });
             }
             if (Array.isArray(payload.data?.records)) {
-              bulkSaveOrUpdateLocalItems(TEACHERS_COLL, payload.data.records);
+              const valid = payload.data.records.filter((t: any) => t && t.id && !isIdDeleted(TEACHERS_COLL, t.id));
+              bulkSaveOrUpdateLocalItems(TEACHERS_COLL, valid);
             }
           }
         } else if (payload.type === "students_updated") {
@@ -891,11 +1149,13 @@ export function initServerSyncEngine(): void {
           } else {
             if (Array.isArray(payload.data?.deletedIds)) {
               payload.data.deletedIds.forEach((delId: string) => {
+                recordDeletedId(STUDENTS_COLL, delId);
                 removeLocalItemsBy(STUDENTS_COLL, s => s.id === delId || s._docId === delId);
               });
             }
             if (Array.isArray(payload.data?.records)) {
-              bulkSaveOrUpdateLocalItems(STUDENTS_COLL, payload.data.records);
+              const valid = payload.data.records.filter((s: any) => s && s.id && !isIdDeleted(STUDENTS_COLL, s.id));
+              bulkSaveOrUpdateLocalItems(STUDENTS_COLL, valid);
             }
           }
         } else if (payload.type === "bootstrap_updated") {
@@ -980,30 +1240,37 @@ export function initServerSyncEngine(): void {
             }
           }
 
-          // Attendance Sync (Bulk diff check)
+          // Attendance Sync (Bulk diff check with tombstones and absent/late sanitization)
           if (Array.isArray(json.attendance)) {
+            const sanitized = json.attendance
+              .filter((a: any) => a && a.id && !isIdDeleted("attendance", a.id))
+              .map((a: any) => sanitizeAttendanceRecord(a));
             const cur = getLocalItems(ATTENDANCE_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(json.attendance)) {
-              setLocalItems(ATTENDANCE_COLL, json.attendance, currentEff.uid);
-              notifyCollectionSubscribers(ATTENDANCE_COLL, json.attendance);
+            if (JSON.stringify(cur) !== JSON.stringify(sanitized)) {
+              setLocalItems(ATTENDANCE_COLL, sanitized, currentEff.uid);
+              notifyCollectionSubscribers(ATTENDANCE_COLL, sanitized);
             }
           }
 
-          // Delays Sync (Bulk diff check)
+          // Delays Sync (Bulk diff check with tombstones)
           if (Array.isArray(json.delays)) {
+            const validDelays = json.delays.filter((d: any) =>
+              d && d.id && !isIdDeleted("morning_delays", d.id) && !isMorningDelayDeleted(d.date, d.studentId)
+            );
             const cur = getLocalItems(MORNING_DELAYS_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(json.delays)) {
-              setLocalItems(MORNING_DELAYS_COLL, json.delays, currentEff.uid);
-              notifyCollectionSubscribers(MORNING_DELAYS_COLL, json.delays);
+            if (JSON.stringify(cur) !== JSON.stringify(validDelays)) {
+              setLocalItems(MORNING_DELAYS_COLL, validDelays, currentEff.uid);
+              notifyCollectionSubscribers(MORNING_DELAYS_COLL, validDelays);
             }
           }
 
           // Behaviors Sync (Bulk diff check)
           if (Array.isArray(json.behaviors)) {
+            const validBehaviors = json.behaviors.filter((b: any) => b && b.id && !isIdDeleted("behaviors", b.id));
             const cur = getLocalItems(BEHAVIORS_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(json.behaviors)) {
-              setLocalItems(BEHAVIORS_COLL, json.behaviors, currentEff.uid);
-              notifyCollectionSubscribers(BEHAVIORS_COLL, json.behaviors);
+            if (JSON.stringify(cur) !== JSON.stringify(validBehaviors)) {
+              setLocalItems(BEHAVIORS_COLL, validBehaviors, currentEff.uid);
+              notifyCollectionSubscribers(BEHAVIORS_COLL, validBehaviors);
             }
           }
         }
@@ -1070,17 +1337,24 @@ export async function ensureRegisteredSchoolLoaded(): Promise<void> {
             notifyCollectionSubscribers(STUDENTS_COLL, filtered);
           }
         }
-        if (Array.isArray(json.attendance) && json.attendance.length > 0) {
-          setLocalItems(ATTENDANCE_COLL, json.attendance, currentEff.uid);
-          notifyCollectionSubscribers(ATTENDANCE_COLL, json.attendance);
+        if (Array.isArray(json.attendance)) {
+          const sanitized = json.attendance
+            .filter((a: any) => a && a.id && !isIdDeleted(ATTENDANCE_COLL, a.id))
+            .map((a: any) => sanitizeAttendanceRecord(a));
+          setLocalItems(ATTENDANCE_COLL, sanitized, currentEff.uid);
+          notifyCollectionSubscribers(ATTENDANCE_COLL, sanitized);
         }
-        if (Array.isArray(json.delays) && json.delays.length > 0) {
-          setLocalItems(MORNING_DELAYS_COLL, json.delays, currentEff.uid);
-          notifyCollectionSubscribers(MORNING_DELAYS_COLL, json.delays);
+        if (Array.isArray(json.delays)) {
+          const validDelays = json.delays.filter((d: any) =>
+            d && d.id && !isIdDeleted(MORNING_DELAYS_COLL, d.id) && !isMorningDelayDeleted(d.date, d.studentId)
+          );
+          setLocalItems(MORNING_DELAYS_COLL, validDelays, currentEff.uid);
+          notifyCollectionSubscribers(MORNING_DELAYS_COLL, validDelays);
         }
-        if (Array.isArray(json.behaviors) && json.behaviors.length > 0) {
-          setLocalItems(BEHAVIORS_COLL, json.behaviors, currentEff.uid);
-          notifyCollectionSubscribers(BEHAVIORS_COLL, json.behaviors);
+        if (Array.isArray(json.behaviors)) {
+          const validBehaviors = json.behaviors.filter((b: any) => b && b.id && !isIdDeleted(BEHAVIORS_COLL, b.id));
+          setLocalItems(BEHAVIORS_COLL, validBehaviors, currentEff.uid);
+          notifyCollectionSubscribers(BEHAVIORS_COLL, validBehaviors);
         }
       }
     }
@@ -1144,7 +1418,9 @@ function notifyCollectionSubscribers(colName: string, items?: any[], fromBroadca
   
   const rawList = Array.isArray(items) ? items : getLocalItems(colName, currentUid);
   const safeList = Array.isArray(rawList) ? rawList : [];
-  const dataToBroadcast = safeList.filter(item => isDocBelongingToUser(item, currentUid, currentEmail));
+  const dataToBroadcast = safeList
+    .filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && !isRecordTombstoned(colName, item))
+    .map(item => colName === ATTENDANCE_COLL ? sanitizeAttendanceRecord(item) : item);
   
   // If items were received (e.g. from local save or broadcast), update local storage cache immediately
   if (Array.isArray(items) && (currentUid || currentEmail)) {
@@ -2148,8 +2424,12 @@ async function fetchAndFilterCollection(colName: string, force: boolean = false)
           altSnap.forEach(docSnap => {
             const data = docSnap.data();
             if (isDocBelongingToUser(data, currentUid, currentEmail) && !seenIds.has(docSnap.id)) {
-              seenIds.add(docSnap.id);
-              results.push({ ...data, id: docSnap.id, _docId: docSnap.id, _origId: (data as any)?.id });
+              const rawItem = { ...data, id: docSnap.id, _docId: docSnap.id, _origId: (data as any)?.id };
+              if (!isRecordTombstoned(colName, rawItem)) {
+                seenIds.add(docSnap.id);
+                const sanitized = colName === ATTENDANCE_COLL ? sanitizeAttendanceRecord(rawItem) : rawItem;
+                results.push(sanitized);
+              }
             }
           });
           setLocalItems(colName, results, currentUid);
@@ -2392,7 +2672,26 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
 // Delete entire Attendance Record (Instant local update + real-time Firestore delete)
 export async function deleteAttendanceRecord(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
+  recordDeletedId(ATTENDANCE_COLL, id);
   removeLocalItemsBy(ATTENDANCE_COLL, (r) => r.id === id || r._docId === id || r._origId === id, eff.uid);
+
+  // Broadcast deletion across all open tabs/windows immediately (0ms)
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "attendance_deleted",
+        deletedIds: [id],
+        schoolCode: getSchoolCode(),
+        ownerEmail: eff.email,
+        ownerUid: eff.uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  // Multi-device server synchronization
+  postToServerSync("/api/sync/attendance", { deletedIds: [id] });
+
   try {
     await safeFirestoreWrite(deleteDoc(doc(db, ATTENDANCE_COLL, id)), 5000);
   } catch (_) {}
@@ -2407,7 +2706,10 @@ export async function deleteAttendanceEntry(recordId: string, studentId: string,
     return deleteAttendanceRecord(recordId);
   }
 
-  // 1. Check local storage cache first
+  // 1. Permanent entry-level tombstone to prevent revival across network or polling
+  recordDeletedAttendanceEntry(recordId, studentId, isAbsentType);
+
+  // 2. Check local storage cache first
   const items = getLocalItems(ATTENDANCE_COLL, uid);
   const idx = items.findIndex(r => r && (r.id === recordId || r._docId === recordId || r._origId === recordId));
   let updatedRecord: any = null;
@@ -2486,7 +2788,29 @@ export async function deleteAttendanceEntry(recordId: string, studentId: string,
     }
   }
 
-  // 2. Persist to Firestore
+  // 3. Broadcast real-time entry deletion (0ms)
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "attendance_entry_deleted",
+        recordId,
+        studentId,
+        isAbsentType,
+        updatedRecord,
+        schoolCode: getSchoolCode(),
+        ownerEmail: eff.email,
+        ownerUid: eff.uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  // 4. Multi-device server synchronization
+  if (updatedRecord) {
+    postToServerSync("/api/sync/attendance", { record: updatedRecord });
+  }
+
+  // 5. Persist to Firestore
   if (updatedRecord) {
     const docRef = doc(db, ATTENDANCE_COLL, recordId);
     await safeFirestoreWrite(setDoc(docRef, updatedRecord, { merge: true }), 5000);
@@ -2776,6 +3100,13 @@ export async function deleteMorningDelayRecord(
     if (!targetDate && found.date) targetDate = found.date;
   }
 
+  // 1. Permanent tombstones across exact ID, canonical ID, and student/date
+  if (id) recordDeletedId(MORNING_DELAYS_COLL, id);
+  if (targetDate && targetStudentId) {
+    recordDeletedMorningDelay(targetDate, targetStudentId);
+    recordDeletedId(MORNING_DELAYS_COLL, `delay_${targetDate}_${targetStudentId}`);
+  }
+
   // 2. Instant local-first purge across all matching criteria (0ms)
   removeLocalItemsBy(MORNING_DELAYS_COLL, (item) => {
     if (item.id === id) return true;
@@ -2783,7 +3114,30 @@ export async function deleteMorningDelayRecord(
     return false;
   }, uid);
 
-  // 3. Real-time Firestore deletion across exact ID, canonical ID, and all matching docs
+  // 3. Broadcast real-time deletion across open tabs/windows (0ms)
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "delay_deleted",
+        deletedIds: [id, targetDate && targetStudentId ? `delay_${targetDate}_${targetStudentId}` : ""].filter(Boolean),
+        studentId: targetStudentId,
+        date: targetDate,
+        schoolCode: getSchoolCode(),
+        ownerEmail: eff.email,
+        ownerUid: eff.uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  // 4. Multi-device server synchronization
+  postToServerSync("/api/sync/delays", {
+    deletedIds: [id, targetDate && targetStudentId ? `delay_${targetDate}_${targetStudentId}` : ""].filter(Boolean),
+    studentId: targetStudentId,
+    date: targetDate
+  });
+
+  // 5. Real-time Firestore deletion across exact ID, canonical ID, and all matching docs
   try {
     const batch = writeBatch(db);
     let batchCount = 0;
@@ -3916,10 +4270,26 @@ export async function saveSchoolName(schoolName: string): Promise<void> {
     if (uid) localStorage.setItem(`school_name_${uid}`, trimmed);
     localStorage.setItem("school_name_cache", trimmed);
     localStorage.setItem("school_name_cached", trimmed);
+    try {
+      window.dispatchEvent(new CustomEvent("school_name_updated", { detail: trimmed }));
+    } catch (_) {}
   }
 
   // 1. Instant local-first cache update & broadcast across tabs (0ms)
   saveOrUpdateLocalItem(SETTINGS_COLL, { schoolName: trimmed, userId: uid, userEmail: email, schoolCode, updatedAt: Date.now() }, uid);
+
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "school_name_updated",
+        schoolName: trimmed,
+        schoolCode: schoolCode || email || uid,
+        ownerEmail: email,
+        ownerUid: uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
 
   // 2. Server synchronization (0ms cross-device real-time sync)
   postToServerSync("/api/sync/school", {
@@ -3990,9 +4360,15 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
 
   // 1. Immediately provide current cached state without waiting for network
   const rawLocal = getLocalItems(colName, currentUid);
-  const safeLocal = Array.isArray(rawLocal) ? rawLocal.filter(item => isDocBelongingToUser(item, currentUid, currentEmail)) : [];
+  const safeLocal = Array.isArray(rawLocal) 
+    ? rawLocal
+        .filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && !isRecordTombstoned(colName, item))
+        .map(item => colName === ATTENDANCE_COLL ? sanitizeAttendanceRecord(item) : item)
+    : [];
   const localList = Array.isArray(hub.latestData) && hub.latestData.length > 0 
-    ? hub.latestData.filter(item => isDocBelongingToUser(item, currentUid, currentEmail))
+    ? hub.latestData
+        .filter(item => isDocBelongingToUser(item, currentUid, currentEmail) && !isRecordTombstoned(colName, item))
+        .map(item => colName === ATTENDANCE_COLL ? sanitizeAttendanceRecord(item) : item)
     : safeLocal;
   
   if (!Array.isArray(hub.latestData) || hub.latestData.length === 0) {
@@ -4024,8 +4400,12 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
         snapshot.forEach(docSnap => {
           const data = docSnap.data();
           if (isDocBelongingToUser(data, activeUid, activeEmail) && !seenIds.has(docSnap.id)) {
-            seenIds.add(docSnap.id);
-            results.push({ ...data, id: docSnap.id, _docId: docSnap.id, _origId: (data as any)?.id });
+            const rawItem = { ...data, id: docSnap.id, _docId: docSnap.id, _origId: (data as any)?.id };
+            if (!isRecordTombstoned(colName, rawItem)) {
+              seenIds.add(docSnap.id);
+              const sanitized = colName === ATTENDANCE_COLL ? sanitizeAttendanceRecord(rawItem) : rawItem;
+              results.push(sanitized);
+            }
           }
         });
 
