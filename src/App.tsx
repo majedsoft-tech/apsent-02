@@ -32,7 +32,8 @@ import {
   setSchoolCode,
   initServerSyncEngine,
   bootstrapSchoolToServer,
-  ensureRegisteredSchoolLoaded
+  ensureRegisteredSchoolLoaded,
+  isIdDeleted
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -759,16 +760,28 @@ export default function App() {
       };
 
       const unsubAttendance = subscribeToAllAttendanceRecords((records) => {
+        if (latestAttendance.length > 0 && Array.isArray(records) && records.length === 0) {
+          const hasExistingNotDeleted = latestAttendance.some(r => !isIdDeleted("attendance", r.id));
+          if (hasExistingNotDeleted) return;
+        }
         latestAttendance = Array.isArray(records) ? records : [];
         computeLiveTodayCounts();
       });
 
       const unsubDelays = subscribeToAllMorningDelayRecords((records) => {
+        if (latestDelays.length > 0 && Array.isArray(records) && records.length === 0) {
+          const hasExistingNotDeleted = latestDelays.some(d => !isIdDeleted("morning_delays", d.id));
+          if (hasExistingNotDeleted) return;
+        }
         latestDelays = Array.isArray(records) ? records : [];
         computeLiveTodayCounts();
       });
 
       const unsubBehaviors = subscribeToAllBehaviorRecords((records) => {
+        if (latestBehaviors.length > 0 && Array.isArray(records) && records.length === 0) {
+          const hasExistingNotDeleted = latestBehaviors.some(b => !isIdDeleted("behaviors", b.id));
+          if (hasExistingNotDeleted) return;
+        }
         latestBehaviors = Array.isArray(records) ? records : [];
         computeLiveTodayCounts();
       });

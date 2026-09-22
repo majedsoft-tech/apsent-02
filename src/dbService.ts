@@ -1205,77 +1205,167 @@ export function initServerSyncEngine(): void {
             }
           }
 
-          // Grades Sync (Bulk diff check)
-          if (Array.isArray(json.grades)) {
+          // Grades Sync (Safe merge without dropping local records)
+          if (Array.isArray(json.grades) && json.grades.length > 0) {
             const filtered = json.grades.filter((g: any) => g && g.id && !isIdDeleted("grades", g.id));
             const cur = getLocalItems(GRADES_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(filtered)) {
-              setLocalItems(GRADES_COLL, filtered, currentEff.uid);
-              notifyCollectionSubscribers(GRADES_COLL, filtered);
+            const curMap = new Map(cur.map((g: any) => [g.id, g]));
+            let changed = false;
+            for (const item of filtered) {
+              const existing = curMap.get(item.id);
+              if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                curMap.set(item.id, item);
+                changed = true;
+              }
+            }
+            if (changed) {
+              const merged = Array.from(curMap.values());
+              setLocalItems(GRADES_COLL, merged, currentEff.uid);
+              notifyCollectionSubscribers(GRADES_COLL, merged);
             }
           }
 
-          // Classes Sync (Bulk diff check)
-          if (Array.isArray(json.classes)) {
+          // Classes Sync (Safe merge without dropping local records)
+          if (Array.isArray(json.classes) && json.classes.length > 0) {
             const filtered = json.classes.filter((c: any) => c && c.id && !isIdDeleted("classes", c.id));
             const cur = getLocalItems(CLASSES_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(filtered)) {
-              setLocalItems(CLASSES_COLL, filtered, currentEff.uid);
-              notifyCollectionSubscribers(CLASSES_COLL, filtered);
+            const curMap = new Map(cur.map((c: any) => [c.id, c]));
+            let changed = false;
+            for (const item of filtered) {
+              const existing = curMap.get(item.id);
+              if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                curMap.set(item.id, item);
+                changed = true;
+              }
+            }
+            if (changed) {
+              const merged = Array.from(curMap.values());
+              setLocalItems(CLASSES_COLL, merged, currentEff.uid);
+              notifyCollectionSubscribers(CLASSES_COLL, merged);
             }
           }
 
-          // Teachers Sync (Bulk diff check)
-          if (Array.isArray(json.teachers)) {
+          // Teachers Sync (Safe merge without dropping local records)
+          if (Array.isArray(json.teachers) && json.teachers.length > 0) {
             const filtered = json.teachers.filter((t: any) => t && t.id && !isIdDeleted("teachers", t.id));
             const cur = getLocalItems(TEACHERS_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(filtered)) {
-              setLocalItems(TEACHERS_COLL, filtered, currentEff.uid);
-              notifyCollectionSubscribers(TEACHERS_COLL, filtered);
+            const curMap = new Map(cur.map((t: any) => [t.id, t]));
+            let changed = false;
+            for (const item of filtered) {
+              const existing = curMap.get(item.id);
+              if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                curMap.set(item.id, item);
+                changed = true;
+              }
+            }
+            if (changed) {
+              const merged = Array.from(curMap.values());
+              setLocalItems(TEACHERS_COLL, merged, currentEff.uid);
+              notifyCollectionSubscribers(TEACHERS_COLL, merged);
             }
           }
 
-          // Students Sync (Bulk diff check)
-          if (Array.isArray(json.students)) {
+          // Students Sync (Safe merge without dropping local records)
+          if (Array.isArray(json.students) && json.students.length > 0) {
             const filtered = json.students.filter((s: any) => s && s.id && !isIdDeleted("students", s.id));
             const cur = getLocalItems(STUDENTS_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(filtered)) {
-              setLocalItems(STUDENTS_COLL, filtered, currentEff.uid);
-              notifyCollectionSubscribers(STUDENTS_COLL, filtered);
+            const curMap = new Map(cur.map((s: any) => [s.id, s]));
+            let changed = false;
+            for (const item of filtered) {
+              const existing = curMap.get(item.id);
+              if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                curMap.set(item.id, item);
+                changed = true;
+              }
+            }
+            if (changed) {
+              const merged = Array.from(curMap.values());
+              setLocalItems(STUDENTS_COLL, merged, currentEff.uid);
+              notifyCollectionSubscribers(STUDENTS_COLL, merged);
             }
           }
 
-          // Attendance Sync (Bulk diff check with tombstones and absent/late sanitization)
+          // Attendance Sync (Safe merge without dropping local or Firestore records)
           if (Array.isArray(json.attendance)) {
             const sanitized = json.attendance
               .filter((a: any) => a && a.id && !isIdDeleted("attendance", a.id))
               .map((a: any) => sanitizeAttendanceRecord(a));
             const cur = getLocalItems(ATTENDANCE_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(sanitized)) {
-              setLocalItems(ATTENDANCE_COLL, sanitized, currentEff.uid);
-              notifyCollectionSubscribers(ATTENDANCE_COLL, sanitized);
+            
+            // If local storage has records from Firestore that the server is missing, sync to server
+            if (cur.length > 0 && sanitized.length === 0) {
+              postToServerSync("/api/sync/attendance", { records: cur, schoolCode: getSchoolCode() });
+            } else if (sanitized.length > 0) {
+              const curMap = new Map(cur.map((a: any) => [a.id, a]));
+              let changed = false;
+              for (const item of sanitized) {
+                if (!isIdDeleted("attendance", item.id)) {
+                  const existing = curMap.get(item.id);
+                  if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                    curMap.set(item.id, item);
+                    changed = true;
+                  }
+                }
+              }
+              if (changed) {
+                const merged = Array.from(curMap.values());
+                setLocalItems(ATTENDANCE_COLL, merged, currentEff.uid);
+                notifyCollectionSubscribers(ATTENDANCE_COLL, merged);
+              }
             }
           }
 
-          // Delays Sync (Bulk diff check with tombstones)
+          // Delays Sync (Safe merge without dropping local or Firestore records)
           if (Array.isArray(json.delays)) {
             const validDelays = json.delays.filter((d: any) =>
               d && d.id && !isIdDeleted("morning_delays", d.id) && !isMorningDelayDeleted(d.date, d.studentId)
             );
             const cur = getLocalItems(MORNING_DELAYS_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(validDelays)) {
-              setLocalItems(MORNING_DELAYS_COLL, validDelays, currentEff.uid);
-              notifyCollectionSubscribers(MORNING_DELAYS_COLL, validDelays);
+            if (cur.length > 0 && validDelays.length === 0) {
+              postToServerSync("/api/sync/delays", { records: cur, schoolCode: getSchoolCode() });
+            } else if (validDelays.length > 0) {
+              const curMap = new Map(cur.map((d: any) => [d.id, d]));
+              let changed = false;
+              for (const item of validDelays) {
+                if (!isIdDeleted("morning_delays", item.id) && !isMorningDelayDeleted(item.date, item.studentId)) {
+                  const existing = curMap.get(item.id);
+                  if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                    curMap.set(item.id, item);
+                    changed = true;
+                  }
+                }
+              }
+              if (changed) {
+                const merged = Array.from(curMap.values());
+                setLocalItems(MORNING_DELAYS_COLL, merged, currentEff.uid);
+                notifyCollectionSubscribers(MORNING_DELAYS_COLL, merged);
+              }
             }
           }
 
-          // Behaviors Sync (Bulk diff check)
+          // Behaviors Sync (Safe merge without dropping local or Firestore records)
           if (Array.isArray(json.behaviors)) {
             const validBehaviors = json.behaviors.filter((b: any) => b && b.id && !isIdDeleted("behaviors", b.id));
             const cur = getLocalItems(BEHAVIORS_COLL, currentEff.uid);
-            if (JSON.stringify(cur) !== JSON.stringify(validBehaviors)) {
-              setLocalItems(BEHAVIORS_COLL, validBehaviors, currentEff.uid);
-              notifyCollectionSubscribers(BEHAVIORS_COLL, validBehaviors);
+            if (cur.length > 0 && validBehaviors.length === 0) {
+              postToServerSync("/api/sync/behaviors", { records: cur, schoolCode: getSchoolCode() });
+            } else if (validBehaviors.length > 0) {
+              const curMap = new Map(cur.map((b: any) => [b.id, b]));
+              let changed = false;
+              for (const item of validBehaviors) {
+                if (!isIdDeleted("behaviors", item.id)) {
+                  const existing = curMap.get(item.id);
+                  if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                    curMap.set(item.id, item);
+                    changed = true;
+                  }
+                }
+              }
+              if (changed) {
+                const merged = Array.from(curMap.values());
+                setLocalItems(BEHAVIORS_COLL, merged, currentEff.uid);
+                notifyCollectionSubscribers(BEHAVIORS_COLL, merged);
+              }
             }
           }
         }
@@ -1346,20 +1436,71 @@ export async function ensureRegisteredSchoolLoaded(): Promise<void> {
           const sanitized = json.attendance
             .filter((a: any) => a && a.id && !isIdDeleted(ATTENDANCE_COLL, a.id))
             .map((a: any) => sanitizeAttendanceRecord(a));
-          setLocalItems(ATTENDANCE_COLL, sanitized, currentEff.uid);
-          notifyCollectionSubscribers(ATTENDANCE_COLL, sanitized);
+          if (sanitized.length > 0) {
+            const cur = getLocalItems(ATTENDANCE_COLL, currentEff.uid);
+            const curMap = new Map(cur.map((a: any) => [a.id, a]));
+            let changed = false;
+            for (const item of sanitized) {
+              if (!isIdDeleted(ATTENDANCE_COLL, item.id)) {
+                const existing = curMap.get(item.id);
+                if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                  curMap.set(item.id, item);
+                  changed = true;
+                }
+              }
+            }
+            if (changed) {
+              const merged = Array.from(curMap.values());
+              setLocalItems(ATTENDANCE_COLL, merged, currentEff.uid);
+              notifyCollectionSubscribers(ATTENDANCE_COLL, merged);
+            }
+          }
         }
         if (Array.isArray(json.delays)) {
           const validDelays = json.delays.filter((d: any) =>
             d && d.id && !isIdDeleted(MORNING_DELAYS_COLL, d.id) && !isMorningDelayDeleted(d.date, d.studentId)
           );
-          setLocalItems(MORNING_DELAYS_COLL, validDelays, currentEff.uid);
-          notifyCollectionSubscribers(MORNING_DELAYS_COLL, validDelays);
+          if (validDelays.length > 0) {
+            const cur = getLocalItems(MORNING_DELAYS_COLL, currentEff.uid);
+            const curMap = new Map(cur.map((d: any) => [d.id, d]));
+            let changed = false;
+            for (const item of validDelays) {
+              if (!isIdDeleted(MORNING_DELAYS_COLL, item.id) && !isMorningDelayDeleted(item.date, item.studentId)) {
+                const existing = curMap.get(item.id);
+                if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                  curMap.set(item.id, item);
+                  changed = true;
+                }
+              }
+            }
+            if (changed) {
+              const merged = Array.from(curMap.values());
+              setLocalItems(MORNING_DELAYS_COLL, merged, currentEff.uid);
+              notifyCollectionSubscribers(MORNING_DELAYS_COLL, merged);
+            }
+          }
         }
         if (Array.isArray(json.behaviors)) {
           const validBehaviors = json.behaviors.filter((b: any) => b && b.id && !isIdDeleted(BEHAVIORS_COLL, b.id));
-          setLocalItems(BEHAVIORS_COLL, validBehaviors, currentEff.uid);
-          notifyCollectionSubscribers(BEHAVIORS_COLL, validBehaviors);
+          if (validBehaviors.length > 0) {
+            const cur = getLocalItems(BEHAVIORS_COLL, currentEff.uid);
+            const curMap = new Map(cur.map((b: any) => [b.id, b]));
+            let changed = false;
+            for (const item of validBehaviors) {
+              if (!isIdDeleted(BEHAVIORS_COLL, item.id)) {
+                const existing = curMap.get(item.id);
+                if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                  curMap.set(item.id, item);
+                  changed = true;
+                }
+              }
+            }
+            if (changed) {
+              const merged = Array.from(curMap.values());
+              setLocalItems(BEHAVIORS_COLL, merged, currentEff.uid);
+              notifyCollectionSubscribers(BEHAVIORS_COLL, merged);
+            }
+          }
         }
       }
     }
@@ -4429,6 +4570,17 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
         hub.callbacks.forEach(cb => {
           try { cb(results); } catch (_) {}
         });
+
+        // Keep server sync cache populated with authoritative Firestore records
+        if (results.length > 0) {
+          if (colName === ATTENDANCE_COLL) {
+            postToServerSync("/api/sync/attendance", { records: results, schoolCode: getSchoolCode() });
+          } else if (colName === MORNING_DELAYS_COLL) {
+            postToServerSync("/api/sync/delays", { records: results, schoolCode: getSchoolCode() });
+          } else if (colName === BEHAVIORS_COLL) {
+            postToServerSync("/api/sync/behaviors", { records: results, schoolCode: getSchoolCode() });
+          }
+        }
 
         // Broadcast to other tabs/windows in real time (0ms)
         if (realTimeSyncChannel) {

@@ -96,6 +96,9 @@ function matchesSchool(item: any, schoolCode?: string, email?: string, uid?: str
   const sEmail = (item.userEmail || item.email || "").toLowerCase().trim();
   const sUid = (item.userId || item.uid || "").trim();
 
+  // If item has no specific school or user metadata, allow viewing it within the school
+  if (!sCode && !sEmail && !sUid) return true;
+
   if (cleanSchoolCode) {
     if (sCode === cleanSchoolCode || sEmail === cleanSchoolCode || sUid === cleanSchoolCode) return true;
   }

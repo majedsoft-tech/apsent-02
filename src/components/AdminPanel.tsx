@@ -36,7 +36,8 @@ import {
   downloadSchoolBackupFile,
   importSchoolBackupData,
   testCloudFirestoreConnection,
-  syncAllLocalDataToFirestore
+  syncAllLocalDataToFirestore,
+  isIdDeleted
 } from "../dbService";
 import { FirebaseDiagnosticModal } from "./FirebaseDiagnosticModal";
 import { 
@@ -2071,6 +2072,10 @@ export default function AdminPanel({
 
       const unsubAttendance = subscribeToAllAttendanceRecords(
         (records) => {
+          if (cachedAttendanceRef.current.length > 0 && records.length === 0) {
+            const hasExistingNotDeleted = cachedAttendanceRef.current.some(r => !isIdDeleted("attendance", r.id));
+            if (hasExistingNotDeleted) return;
+          }
           cachedAttendanceRef.current = records;
           runCompute();
         },
@@ -2081,6 +2086,10 @@ export default function AdminPanel({
 
       const unsubBehaviors = subscribeToAllBehaviorRecords(
         (records) => {
+          if (cachedBehaviorsRef.current.length > 0 && records.length === 0) {
+            const hasExistingNotDeleted = cachedBehaviorsRef.current.some(b => !isIdDeleted("behaviors", b.id));
+            if (hasExistingNotDeleted) return;
+          }
           cachedBehaviorsRef.current = records;
           behaviorsReceivedRef.current = true;
           runCompute();
@@ -2092,6 +2101,10 @@ export default function AdminPanel({
 
       const unsubDelays = subscribeToAllMorningDelayRecords(
         (records) => {
+          if (cachedDelaysRef.current.length > 0 && records.length === 0) {
+            const hasExistingNotDeleted = cachedDelaysRef.current.some(d => !isIdDeleted("morning_delays", d.id));
+            if (hasExistingNotDeleted) return;
+          }
           cachedDelaysRef.current = records;
           setMorningDelaysList(records);
           runCompute();
