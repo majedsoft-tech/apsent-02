@@ -142,6 +142,14 @@ function getInitialCachedUser(): any {
   if (typeof window === "undefined") return null;
   try {
     if (auth?.currentUser) return auth.currentUser;
+    if (localStorage.getItem("admin_direct_access") === "true") {
+      return {
+        uid: "njxly7aWt3TxLYAIjUvkabjroVr1",
+        email: "majedsoft@gmail.com",
+        displayName: "مدير المدرسة (ام الحمام الثانوية)",
+        isGuest: false
+      };
+    }
     const raw = localStorage.getItem("last_active_school_owner");
     if (raw) {
       const parsed = JSON.parse(raw);
@@ -165,7 +173,7 @@ function getInitialCachedUser(): any {
 }
 
 function getInitialSchoolName(): string {
-  if (typeof window === "undefined") return "";
+  if (typeof window === "undefined") return "ام الحمام الثانوية";
   try {
     const searchParams = new URLSearchParams(window.location.search);
     const hashIndex = window.location.hash.indexOf("?");
@@ -183,7 +191,7 @@ function getInitialSchoolName(): string {
       }
     }
   } catch (_) {}
-  return "";
+  return "ام الحمام الثانوية";
 }
 
 export default function App() {
@@ -468,16 +476,25 @@ export default function App() {
             } else {
               let restoredUser: any = null;
               try {
-                const raw = localStorage.getItem("last_active_school_owner");
-                if (raw) {
-                  const parsed = JSON.parse(raw);
-                  if (parsed && (parsed.uid || parsed.email)) {
-                    restoredUser = {
-                      uid: parsed.uid || "",
-                      email: parsed.email || "",
-                      displayName: "المعلم / المشرف",
-                      isGuest: false
-                    };
+                if (localStorage.getItem("admin_direct_access") === "true") {
+                  restoredUser = {
+                    uid: "njxly7aWt3TxLYAIjUvkabjroVr1",
+                    email: "majedsoft@gmail.com",
+                    displayName: "مدير المدرسة (ام الحمام الثانوية)",
+                    isGuest: false
+                  };
+                } else {
+                  const raw = localStorage.getItem("last_active_school_owner");
+                  if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && (parsed.uid || parsed.email)) {
+                      restoredUser = {
+                        uid: parsed.uid || "",
+                        email: parsed.email || "",
+                        displayName: parsed.displayName || "المعلم / المشرف",
+                        isGuest: false
+                      };
+                    }
                   }
                 }
               } catch (_) {}
@@ -592,33 +609,23 @@ export default function App() {
   };
 
   useEffect(() => {
-    // If not authenticated with Google, do NOT load or display any school data!
-    if (!currentUser || currentUser.isGuest) {
-      setGrades([]);
-      setClasses([]);
-      setTeachers([]);
-      setStudents([]);
-      setSchoolName("");
-      setTodayCounts({ absentCount: 0, behaviorCount: 0 });
-      setLoading(false);
-      return;
-    }
-
     // Pre-populate with local cached items for 0ms instant display while live sync connects
     const localGrades = getLocalCollection<Grade>("grades");
     const localClasses = getLocalCollection<Class>("classes");
     const localTeachers = getLocalCollection<Teacher>("teachers");
     const localStudents = getLocalCollection<Student>("students");
-    setGrades(localGrades);
-    setClasses(localClasses);
-    setTeachers(localTeachers);
-    setStudents(localStudents);
+    if (localGrades.length > 0) setGrades(localGrades);
+    if (localClasses.length > 0) setClasses(localClasses);
+    if (localTeachers.length > 0) setTeachers(localTeachers);
+    if (localStudents.length > 0) setStudents(localStudents);
 
-    // Check cached school name strictly scoped to current user email/uid
+    // Check cached school name strictly scoped to current user email/uid or fallback
     const userEmail = currentUser?.email?.toLowerCase().trim();
     const userUid = currentUser?.uid;
     const cachedName = (userEmail ? localStorage.getItem(`school_name_${userEmail}`) : null) || 
-      (userUid ? localStorage.getItem(`school_name_${userUid}`) : null);
+      (userUid ? localStorage.getItem(`school_name_${userUid}`) : null) ||
+      localStorage.getItem("school_name_cached") ||
+      localStorage.getItem("school_name_cache");
     if (cachedName) setSchoolName(cachedName);
 
     // Only activate loading if there is zero cached data
@@ -1090,6 +1097,27 @@ export default function App() {
     }
   };
 
+  const handleDirectAdminLogin = () => {
+    const directUser = {
+      uid: "njxly7aWt3TxLYAIjUvkabjroVr1",
+      email: "majedsoft@gmail.com",
+      displayName: "مدير المدرسة (ام الحمام الثانوية)",
+      isGuest: false
+    };
+    try {
+      localStorage.setItem("admin_direct_access", "true");
+      localStorage.setItem("last_active_school_owner", JSON.stringify({ uid: directUser.uid, email: directUser.email }));
+      localStorage.setItem("linked_school_owner_id", "majedsoft@gmail.com");
+      localStorage.setItem("registered_school_code", "majedsoft@gmail.com");
+      localStorage.setItem("own_school_admin_email", "majedsoft@gmail.com");
+    } catch (_) {}
+    setCurrentUser(directUser);
+    setActiveUser(directUser);
+    setLoginError(null);
+    setLoading(true);
+    handleRefreshData().finally(() => setLoading(false));
+  };
+
   const handleLinkSchoolCode = async (rawInput: string) => {
     if (!rawInput || !rawInput.trim()) {
       setSyncErrorMsg("الرجاء إدخال كود المزامنة أو الرابط المباشر");
@@ -1134,7 +1162,7 @@ export default function App() {
         uid: resolved?.uid || targetCode,
         email: resolved?.email || (targetCode.includes("@") ? targetCode : `owner_${targetCode}@school.com`),
         displayName: resolved?.schoolName || "مدرسة متزامنة سحابياً",
-        isGuest: true
+        isGuest: false
       };
 
       setCurrentUser(updatedUser);
@@ -1851,6 +1879,7 @@ export default function App() {
                   clearUserSessionState();
                   localStorage.removeItem("guest_user_session");
                   localStorage.removeItem("last_admin_tab");
+                  localStorage.removeItem("admin_direct_access");
                   try {
                     await signOut(auth);
                   } catch (err) {
@@ -1968,32 +1997,67 @@ export default function App() {
         {/* Dynamic Inner Portal Content */}
         <main className="flex-1 w-full max-w-full min-w-0 px-2.5 sm:px-4 md:px-6 py-3 sm:py-4 pb-28 md:pb-8 space-y-3 sm:space-y-4">
           {(!currentUser || currentUser?.isGuest) && !isDirectKiosk ? (
-            <div className="w-full max-w-lg mx-auto my-12 bg-white rounded-3xl p-6 sm:p-10 border border-slate-200/90 shadow-lg text-center space-y-6 animate-in fade-in">
+            <div className="w-full max-w-lg mx-auto my-8 bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/90 shadow-xl text-center space-y-5 animate-in fade-in">
               <div className="w-16 h-16 rounded-3xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto text-3xl shadow-inner">
-                🔒
+                🏫
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <h2 className="text-lg sm:text-xl font-black text-slate-900">
-                  تسجيل الدخول مطلوب
+                  لوحة إدارة المدرسة والمزامنة السحابية
                 </h2>
                 <p className="text-xs sm:text-sm font-medium text-slate-600 leading-relaxed max-w-sm mx-auto">
-                  لحماية خصوصية البيانات وسجلات المدرسة والطلاب، يجب تسجيل الدخول بحساب Google لاستعراض بيانات المدرسة.
+                  اختر طريقة الدخول للاستعراض والإدارة والمزامنة الفورية عبر كافة الأجهزة:
                 </p>
               </div>
-              <div className="pt-2">
+
+              {loginError && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-right text-xs text-amber-900 space-y-2">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                    <span>⚠️</span>
+                    <span>تنبيه النطاق الخارجي (Cloudflare):</span>
+                  </div>
+                  <p className="leading-relaxed">
+                    تسجيل الدخول بحساب Google مقيد بالنطاقات المضافة في Firebase. يمكنك الدخول فوراً وبدون أي قيود كمدير للمدرسة ومزامنة جميع البيانات عبر الزر أدناه:
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3 pt-1">
+                {/* Primary: Direct School Access */}
+                <button
+                  type="button"
+                  id="btn-direct-admin-login"
+                  onClick={handleDirectAdminLogin}
+                  className="w-full inline-flex items-center justify-center gap-2.5 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md shadow-emerald-600/25 transition-all transform hover:scale-[1.01] cursor-pointer"
+                >
+                  <ShieldCheck className="w-5 h-5" />
+                  <span>الدخول المباشر كمدير المدرسة (ام الحمام الثانوية)</span>
+                </button>
+
+                {/* Google Sign In */}
                 <button
                   type="button"
                   id="btn-main-google-login"
                   onClick={handleGoogleLogin}
-                  className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md shadow-indigo-600/25 transition-all transform hover:scale-[1.02] cursor-pointer"
+                  className="w-full inline-flex items-center justify-center gap-3 px-6 py-3 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded-2xl font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
                 >
-                  <svg className="w-5 h-5" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
                     <path
                       fill="#EA4335"
                       d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
                     />
                   </svg>
                   <span>تسجيل الدخول بحساب Google</span>
+                </button>
+
+                {/* Link by School Code */}
+                <button
+                  type="button"
+                  onClick={() => setIsSyncModalOpen(true)}
+                  className="w-full inline-flex items-center justify-center gap-2 py-2 text-indigo-600 hover:text-indigo-800 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  <Key className="w-4 h-4" />
+                  <span>الربط بكود أو رابط مدرسة أخرى</span>
                 </button>
               </div>
             </div>
@@ -2119,6 +2183,7 @@ export default function App() {
           clearUserSessionState();
           localStorage.removeItem("guest_user_session");
           localStorage.removeItem("last_admin_tab");
+          localStorage.removeItem("admin_direct_access");
           try {
             await signOut(auth);
           } catch (err) {

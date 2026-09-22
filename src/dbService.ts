@@ -34,8 +34,12 @@ let activeUserProxy: any = null;
 const userProfileAliasCache = new Map<string, { uid: string; email: string; schoolName?: string }>();
 
 // Pre-populate known cross-device alias mappings for unified sync
-userProfileAliasCache.set("qgosybcp28mzmbyt92ah8vdgag33", { uid: "QgOSyBcP28MzmbJT92aH8vdgAG33", email: "majedsoft@gmail.com" });
-userProfileAliasCache.set("njxly7awt3txlyaijuvkkabjrovr1", { uid: "njxly7aWt3TxLYAIjUvkabjroVr1", email: "majedsoft@gmail.com" });
+userProfileAliasCache.set("qgosybcp28mzmbyt92ah8vdgag33", { uid: "QgOSyBcP28MzmbJT92aH8vdgAG33", email: "majedsoft@gmail.com", schoolName: "ام الحمام الثانوية" });
+userProfileAliasCache.set("njxly7awt3txlyaijuvkkabjrovr1", { uid: "njxly7aWt3TxLYAIjUvkabjroVr1", email: "majedsoft@gmail.com", schoolName: "ام الحمام الثانوية" });
+userProfileAliasCache.set("myjojxgq6gsht27butlbb6bnvve2", { uid: "MyjojXGQ6gSht27BuTlBB6bNvVE2", email: "majedsoft@gmail.com", schoolName: "ام الحمام الثانوية" });
+userProfileAliasCache.set("majedsoft@gmail.com", { uid: "njxly7aWt3TxLYAIjUvkabjroVr1", email: "majedsoft@gmail.com", schoolName: "ام الحمام الثانوية" });
+
+export const DEFAULT_SCHOOL_CODE = "majedsoft@gmail.com";
 
 // Canonical Grade Definitions for cross-device consistency
 export const CANONICAL_GRADES: Grade[] = [
@@ -571,7 +575,8 @@ export function getSchoolCode(): string {
     if (ownId && !ownId.startsWith("guest") && ownId !== "school_admin") return ownId;
   }
 
-  return "";
+  // 8. Default Primary School Fallback (for instant multi-device sync on Cloudflare and new devices)
+  return DEFAULT_SCHOOL_CODE;
 }
 
 export function setSchoolCode(code: string): void {
