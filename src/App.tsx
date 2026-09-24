@@ -142,6 +142,21 @@ function getInitialAdminTab(): "stats" | "grades" | "teachers" | "students" {
 function getInitialCachedUser(): any {
   if (typeof window === "undefined") return null;
   try {
+    const searchParams = new URLSearchParams(window.location.search);
+    const hashIndex = window.location.hash.indexOf("?");
+    const hashParams = hashIndex !== -1 ? new URLSearchParams(window.location.hash.substring(hashIndex)) : null;
+    const urlUid = (searchParams.get("owner") || searchParams.get("ownerId") || searchParams.get("uid") || hashParams?.get("owner") || hashParams?.get("ownerId") || hashParams?.get("uid") || "").trim();
+    const urlEmail = (searchParams.get("email") || searchParams.get("ownerEmail") || searchParams.get("userEmail") || hashParams?.get("email") || hashParams?.get("ownerEmail") || hashParams?.get("userEmail") || "").trim().toLowerCase();
+    const urlSchool = searchParams.get("school") || searchParams.get("schoolName") || hashParams?.get("school") || hashParams?.get("schoolName");
+    if (urlUid || urlEmail) {
+      return {
+        uid: urlUid || "direct_user",
+        email: urlEmail || "",
+        displayName: urlSchool ? decodeURIComponent(urlSchool) : "المعلم / المشرف",
+        isGuest: false
+      };
+    }
+
     if (auth?.currentUser) return auth.currentUser;
     if (localStorage.getItem("admin_direct_access") === "true") {
       return {

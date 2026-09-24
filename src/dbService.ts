@@ -3187,7 +3187,18 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
   unrecordDeletedMorningDelay(record.date, record.studentId);
 
   const fullRecord: MorningDelayRecord = {
-    ...record,
+    studentId: record.studentId,
+    studentName: record.studentName || "",
+    gradeId: record.gradeId,
+    gradeName: record.gradeName || "",
+    classId: record.classId,
+    className: record.className || "",
+    date: record.date,
+    arrivalTime: record.arrivalTime,
+    delayMinutes: record.delayMinutes || 15,
+    reason: record.reason || "بدون عذر",
+    recordedBy: record.recordedBy || "مشرف التأخر الصباحي",
+    notes: record.notes || "",
     id: recordId,
     userId: uid,
     userEmail: email,
@@ -3196,15 +3207,19 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
     updatedAt: Date.now()
   };
 
-  // 1. Instant local cache update (0ms)
+  // 1. Instant local cache update (0ms synchronous)
   saveOrUpdateLocalItem(MORNING_DELAYS_COLL, fullRecord, uid);
 
-  // 2. Real-time server sync
+  // 2. Real-time server sync (background)
   postToServerSync("/api/sync/delays", { record: fullRecord });
 
-  // 3. Real-time Firestore write (safeguarded non-blocking timeout)
-  const docRef = doc(db, MORNING_DELAYS_COLL, recordId);
-  await safeFirestoreWrite(setDoc(docRef, fullRecord, { merge: true }), 2500);
+  // 3. Real-time Firestore write safely with non-blocking timeout
+  try {
+    const docRef = doc(db, MORNING_DELAYS_COLL, recordId);
+    await safeFirestoreWrite(setDoc(docRef, fullRecord, { merge: true }), 2500);
+  } catch (err) {
+    console.warn("Firestore morning delay write warning:", err);
+  }
 
   return recordId;
 }
@@ -3397,7 +3412,9 @@ export async function deleteMorningDelayRecord(
     }
 
     if (batchCount > 0) {
-      await batch.commit();
+      batch.commit().catch(err => {
+        console.warn("Firestore delete batch warning:", err);
+      });
     }
   } catch (err: any) {
     handleFirestoreError(err);
@@ -4598,6 +4615,28 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
     callback(Array.isArray(localList) ? localList : []);
   } catch (_) {}
 
+  // Proactive background bootstrap from multi-device server sync so new devices / links hydrate instantly
+  if (typeof window !== "undefined") {
+    const serverEndpoint = colName === MORNING_DELAYS_COLL ? "/api/sync/delays" :
+                           colName === ATTENDANCE_COLL ? "/api/sync/attendance" :
+                           colName === BEHAVIORS_COLL ? "/api/sync/behaviors" : null;
+    if (serverEndpoint) {
+      const code = getSchoolCode();
+      const q = new URLSearchParams();
+      if (code) q.set("schoolCode", code);
+      if (currentEmail && !eff.isGuest && !currentEmail.includes("@school.local")) q.set("email", currentEmail);
+      if (currentUid && !eff.isGuest && !currentUid.startsWith("guest")) q.set("uid", currentUid);
+      fetch(`${serverEndpoint}?${q.toString()}`)
+        .then(res => res.json())
+        .then(json => {
+          if (json.success && Array.isArray(json.records) && json.records.length > 0) {
+            bulkSaveOrUpdateLocalItems(colName, json.records, currentUid);
+          }
+        })
+        .catch(() => {});
+    }
+  }
+
   // 2. Connect to Firestore singleton onSnapshot listener if not already connected
   if (!hub.unsub) {
     try {
@@ -4628,6 +4667,18 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
             }
           }
         });
+
+        // CRITICAL: Merge with non-tombstoned local cache items so recently recorded items are NEVER wiped out by a delayed snapshot!
+        const existingLocal = getLocalItems(colName, activeUid);
+        if (Array.isArray(existingLocal) && existingLocal.length > 0) {
+          existingLocal.forEach(localItem => {
+            if (!localItem || !localItem.id) return;
+            if (!seenIds.has(localItem.id) && isDocBelongingToUser(localItem, activeUid, activeEmail) && !isRecordTombstoned(colName, localItem)) {
+              seenIds.add(localItem.id);
+              results.push(localItem);
+            }
+          });
+        }
 
         // Update local storage cache with authoritative snapshot
         const serialized = JSON.stringify(results);
