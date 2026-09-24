@@ -107,6 +107,10 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
   const [attendanceLoading, setAttendanceLoading] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [isDirty, setIsDirty] = useState<boolean>(false);
+  const isDirtyRef = React.useRef<boolean>(false);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
   const [hasRecord, setHasRecord] = useState<boolean>(false);
   const [showSaveAttendanceModal, setShowSaveAttendanceModal] = useState<boolean>(false);
 
@@ -199,10 +203,27 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
     }
   }, [selectedGradeId, classes]);
 
+  // Keep students in sync when propStudents or grade/class changes
+  useEffect(() => {
+    if (!selectedGradeId || !selectedClassId) {
+      setStudents([]);
+      return;
+    }
+    if (propStudents && propStudents.length > 0) {
+      const studentList = propStudents.filter(s => s.gradeId === selectedGradeId && s.classId === selectedClassId);
+      setStudents(studentList);
+      if (studentList.length > 0 && !selectedStudentId) {
+        setSelectedStudentId(studentList[0].id);
+      }
+    }
+  }, [propStudents, selectedGradeId, selectedClassId]);
+
   // Fetch Students and existing Attendance record when Class/Period/Date changes (Real-time live-sync!)
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => void) | null = null;
+    setIsDirty(false);
+    isDirtyRef.current = false;
 
     async function loadStudents() {
       if (!selectedGradeId || !selectedClassId) {
@@ -234,9 +255,14 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
           selectedClassId,
           (record) => {
             if (!active) return;
+            // CRITICAL: If the teacher is actively editing or has unsaved draft, do NOT clobber with background sync!
+            if (isDirtyRef.current) {
+              setAttendanceLoading(false);
+              return;
+            }
             if (record) {
-              const absent = record.absent || [];
-              const late = record.late || [];
+              const absent = Array.isArray(record.absent) ? record.absent : [];
+              const late = Array.isArray(record.late) ? record.late : [];
               const present = record.present && record.present.length > 0
                 ? record.present
                 : studentList.map(s => s.id).filter(id => !absent.includes(id) && !late.includes(id));
@@ -247,6 +273,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
               setSavedAbsentIds(absent);
               setHasRecord(true);
               setIsDirty(false);
+              isDirtyRef.current = false;
               setIsAllPresentChecked(false);
               setIsAllAbsentChecked(false);
               setIsBulkSelected(false);
@@ -257,6 +284,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
               setSavedAbsentIds([]);
               setHasRecord(false);
               setIsDirty(false);
+              isDirtyRef.current = false;
               setIsAllPresentChecked(false);
               setIsAllAbsentChecked(false);
               setIsBulkSelected(false);
@@ -278,7 +306,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
       active = false;
       if (unsubscribe) unsubscribe();
     };
-  }, [selectedGradeId, selectedClassId, selectedPeriod, propStudents]);
+  }, [selectedGradeId, selectedClassId, selectedPeriod]);
 
   // Fetch behavior records when selected student changes (Real-time live-sync!)
   useEffect(() => {
@@ -300,56 +328,51 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
     return () => unsubscribe();
   }, [selectedStudentId]);
 
-  // Handle student attendance toggle
+  // Handle student attendance toggle (Atomic functional update to prevent dropped taps)
   const toggleAttendance = (studentId: string) => {
     setIsDirty(true);
+    isDirtyRef.current = true;
     setIsAllPresentChecked(false);
     setIsAllAbsentChecked(false);
 
-    const isAbsent = absentStudentIds.includes(studentId);
-    const shouldTogglePresentAbsent = hasRecord || isBulkSelected;
+    setAbsentStudentIds(prevAbsent => {
+      const isAbsent = prevAbsent.includes(studentId);
+      const shouldTogglePresentAbsent = hasRecord || isBulkSelected;
 
-    if (!shouldTogglePresentAbsent) {
-      // حالة عدم الحفظ المسبق وبدون اختيار حضور/غياب الجميع
-      if (isAbsent) {
-        // إلغاء تحديد الطالب كغائب (مسح حالة غائب وإبقائه غير محدد بدون إظهار كلمة حاضر)
-        setAbsentStudentIds(prev => prev.filter(id => id !== studentId));
-        setLateStudentIds(prev => prev.filter(id => id !== studentId));
-        setPresentStudentIds(prev => prev.filter(id => id !== studentId));
+      if (!shouldTogglePresentAbsent) {
+        // حالة عدم الحفظ المسبق وبدون اختيار حضور/غياب الجميع
+        if (isAbsent) {
+          // إلغاء تحديد الطالب كغائب (مسح حالة غائب وإبقائه غير محدد بدون إظهار كلمة حاضر)
+          setPresentStudentIds(prev => prev.filter(id => id !== studentId));
+          setLateStudentIds(prev => prev.filter(id => id !== studentId));
+          return prevAbsent.filter(id => id !== studentId);
+        } else {
+          // تحديد الطالب كغائب
+          setPresentStudentIds(prev => prev.filter(id => id !== studentId));
+          setLateStudentIds(prev => prev.filter(id => id !== studentId));
+          return prevAbsent.includes(studentId) ? prevAbsent : [...prevAbsent, studentId];
+        }
       } else {
-        // تحديد الطالب كغائب
-        setPresentStudentIds(prev => prev.filter(id => id !== studentId));
-        setLateStudentIds(prev => prev.filter(id => id !== studentId));
-        setAbsentStudentIds(prev => {
-          if (!prev.includes(studentId)) return [...prev, studentId];
-          return prev;
-        });
+        // حالة تم الحفظ المسبق أو تم تحديد حضور/غياب الجميع لهذه الحصة
+        if (isAbsent) {
+          // التغيير من غائب إلى حاضر
+          setLateStudentIds(prev => prev.filter(id => id !== studentId));
+          setPresentStudentIds(prev => prev.includes(studentId) ? prev : [...prev, studentId]);
+          return prevAbsent.filter(id => id !== studentId);
+        } else {
+          // التغيير من حاضر إلى غائب
+          setPresentStudentIds(prev => prev.filter(id => id !== studentId));
+          setLateStudentIds(prev => prev.filter(id => id !== studentId));
+          return prevAbsent.includes(studentId) ? prevAbsent : [...prevAbsent, studentId];
+        }
       }
-    } else {
-      // حالة تم الحفظ المسبق أو تم تحديد حضور/غياب الجميع لهذه الحصة
-      if (isAbsent) {
-        // التغيير من غائب إلى حاضر
-        setAbsentStudentIds(prev => prev.filter(id => id !== studentId));
-        setLateStudentIds(prev => prev.filter(id => id !== studentId));
-        setPresentStudentIds(prev => {
-          if (!prev.includes(studentId)) return [...prev, studentId];
-          return prev;
-        });
-      } else {
-        // التغيير من حاضر إلى غائب
-        setPresentStudentIds(prev => prev.filter(id => id !== studentId));
-        setLateStudentIds(prev => prev.filter(id => id !== studentId));
-        setAbsentStudentIds(prev => {
-          if (!prev.includes(studentId)) return [...prev, studentId];
-          return prev;
-        });
-      }
-    }
+    });
   };
 
   // Helper selectors
   const handleSelectAllPresent = () => {
     setIsDirty(true);
+    isDirtyRef.current = true;
     setAbsentStudentIds([]);
     setLateStudentIds([]);
     setPresentStudentIds(students.map(s => s.id));
@@ -360,6 +383,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
   const handleSelectAllAbsent = () => {
     setIsDirty(true);
+    isDirtyRef.current = true;
     setAbsentStudentIds(students.map(s => s.id));
     setLateStudentIds([]);
     setPresentStudentIds([]);
@@ -388,9 +412,11 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
     setShowSaveAttendanceModal(true);
 
     try {
+      const currentAbsent = [...absentStudentIds];
+      const currentLate = [...lateStudentIds];
       const presentIds = students
           .map(s => s.id)
-          .filter(id => !absentStudentIds.includes(id) && !lateStudentIds.includes(id));
+          .filter(id => !currentAbsent.includes(id) && !currentLate.includes(id));
 
       const studentNamesMap: Record<string, string> = {};
       students.forEach(s => {
@@ -410,16 +436,17 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
         teacherId: selectedTeacherId,
         teacherName: currentTeacherName,
         present: presentIds,
-        absent: absentStudentIds,
-        late: lateStudentIds,
+        absent: currentAbsent,
+        late: currentLate,
         studentNames: studentNamesMap,
-        isNoAbsence: absentStudentIds.length === 0 && lateStudentIds.length === 0
+        isNoAbsence: currentAbsent.length === 0 && currentLate.length === 0
       });
 
       setSaveStatus({ type: "success", message: "تم حفظ وتوثيق الغياب بنجاح! 💾" });
-      setSavedAbsentIds(absentStudentIds);
+      setSavedAbsentIds(currentAbsent);
       setHasRecord(true);
       setIsDirty(false);
+      isDirtyRef.current = false;
       if (onRefreshStats) onRefreshStats();
       
       // Auto close save popup smoothly after displaying success
@@ -845,8 +872,10 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                   return (
                     <div
                       key={`${student.id}-${idx}`}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => toggleAttendance(student.id)}
-                      className={`flex items-center justify-between px-4 py-3.5 sm:py-3.5 min-h-[48px] cursor-pointer transition select-none active:scale-[0.99] active:bg-slate-100/80 ${rowBg}`}
+                      className={`flex items-center justify-between px-4 py-3.5 sm:py-3.5 min-h-[48px] cursor-pointer transition select-none active:scale-[0.99] active:bg-slate-100/80 touch-manipulation ${rowBg}`}
                     >
                       <div className="flex items-center gap-3">
                         <span className="text-xs font-black w-7 h-7 flex items-center justify-center rounded-full bg-slate-100 text-slate-700 shrink-0">

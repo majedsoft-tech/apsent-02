@@ -133,7 +133,7 @@ export type SupportedEntityType = "classes" | "grades" | "students" | "teachers"
 
 // In-memory sets for 0ms synchronous lookups
 const memoryDeletedEntities = new Set<string>();
-const memoryDeletedAttEntries = new Set<string>();
+const memoryDeletedAttEntries = new Map<string, number>(); // key -> deletion timestamp
 const memoryDeletedDelays = new Set<string>();
 
 // Bootstrap memory sets from localStorage
@@ -146,11 +146,8 @@ if (typeof window !== "undefined") {
     }
   } catch (_) {}
   try {
-    const raw = localStorage.getItem(DELETED_ATTENDANCE_ENTRIES_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) arr.forEach(k => memoryDeletedAttEntries.add(k));
-    }
+    // Purge legacy permanent entry tombstones that cause active students to disappear or revert to present
+    localStorage.removeItem(DELETED_ATTENDANCE_ENTRIES_KEY);
   } catch (_) {}
   try {
     const raw = localStorage.getItem(DELETED_DELAYS_KEY);
@@ -234,33 +231,40 @@ export function recordDeletedAttendanceEntry(recordId: string, studentId: string
   if (!recordId || !studentId) return;
   const kind = isAbsent ? "abs" : "late";
   const key = `${recordId}:${studentId}:${kind}`;
-  memoryDeletedAttEntries.add(key);
-  if (typeof window === "undefined") return;
-  try {
-    const raw = localStorage.getItem(DELETED_ATTENDANCE_ENTRIES_KEY);
-    const list: string[] = raw ? JSON.parse(raw) : [];
-    if (!list.includes(key)) {
-      list.push(key);
-      if (list.length > 10000) list.shift();
-      localStorage.setItem(DELETED_ATTENDANCE_ENTRIES_KEY, JSON.stringify(list));
-    }
-  } catch (_) {}
+  memoryDeletedAttEntries.set(key, Date.now());
 }
 
-export function isAttendanceEntryDeleted(recordId: string, studentId: string, isAbsent: boolean): boolean {
+export function unrecordDeletedAttendanceEntry(recordId: string, studentId: string): void {
+  if (!studentId) return;
+  const toDelete: string[] = [];
+  memoryDeletedAttEntries.forEach((_, key) => {
+    if (key.includes(studentId)) {
+      if (!recordId || key.includes(recordId) || recordId.includes(key.split(":")[0])) {
+        toDelete.push(key);
+      }
+    }
+  });
+  toDelete.forEach(k => memoryDeletedAttEntries.delete(k));
+}
+
+export function isAttendanceEntryDeleted(recordId: string, studentId: string, isAbsent: boolean, recordUpdatedAt?: number): boolean {
   if (!recordId || !studentId) return false;
   const kind = isAbsent ? "abs" : "late";
   const key = `${recordId}:${studentId}:${kind}`;
-  if (memoryDeletedAttEntries.has(key)) return true;
-  // Also check generic slot matches if recordId has prefixes
-  for (const item of memoryDeletedAttEntries) {
-    if (item.endsWith(`:${studentId}:${kind}`)) {
-      const parts = item.split(":");
-      const storedRecId = parts[0];
-      if (recordId.includes(storedRecId) || storedRecId.includes(recordId)) {
-        return true;
-      }
+
+  const deletedTime = memoryDeletedAttEntries.get(key);
+  if (deletedTime) {
+    // 1. Short-lived 25s TTL: only protect against in-flight Firestore write race conditions
+    if (Date.now() - deletedTime > 25000) {
+      memoryDeletedAttEntries.delete(key);
+      return false;
     }
+    // 2. If the record itself has been saved/updated AFTER this deletion, the record is authoritative
+    if (recordUpdatedAt && recordUpdatedAt >= deletedTime) {
+      memoryDeletedAttEntries.delete(key);
+      return false;
+    }
+    return true;
   }
   return false;
 }
@@ -295,6 +299,7 @@ export function isMorningDelayDeleted(date?: string, studentId?: string): boolea
 export function sanitizeAttendanceRecord(record: any): any {
   if (!record) return record;
   const rId = record.id || record._docId || "";
+  const recTime = typeof record.updatedAt === "number" ? record.updatedAt : (typeof record.timestamp === "number" ? record.timestamp : 0);
   let absent = Array.isArray(record.absent) ? [...record.absent] : [];
   let late = Array.isArray(record.late) ? [...record.late] : [];
   let present = Array.isArray(record.present) ? [...record.present] : [];
@@ -302,7 +307,7 @@ export function sanitizeAttendanceRecord(record: any): any {
   let changed = false;
   if (rId) {
     absent = absent.filter(sId => {
-      if (isAttendanceEntryDeleted(rId, sId, true)) {
+      if (isAttendanceEntryDeleted(rId, sId, true, recTime)) {
         changed = true;
         if (!present.includes(sId)) present.push(sId);
         return false;
@@ -310,7 +315,7 @@ export function sanitizeAttendanceRecord(record: any): any {
       return true;
     });
     late = late.filter(sId => {
-      if (isAttendanceEntryDeleted(rId, sId, false)) {
+      if (isAttendanceEntryDeleted(rId, sId, false, recTime)) {
         changed = true;
         if (!present.includes(sId)) present.push(sId);
         return false;
@@ -2804,13 +2809,26 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
     updatedAt: Date.now()
   };
 
-  // 1. Save to local storage cache immediately (0ms)
+  // 1. Unmark deleted tombstones for all students explicitly saved as absent or late
+  unmarkDeletedId("attendance", recordId);
+  if (Array.isArray(record.absent)) {
+    record.absent.forEach(stId => {
+      unrecordDeletedAttendanceEntry(recordId, stId);
+    });
+  }
+  if (Array.isArray(record.late)) {
+    record.late.forEach(stId => {
+      unrecordDeletedAttendanceEntry(recordId, stId);
+    });
+  }
+
+  // 2. Save to local storage cache immediately (0ms)
   saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord, uid);
 
-  // 2. Real-time multi-device server sync (guarantees cross-device sync even if Firestore quota is exceeded)
+  // 3. Real-time multi-device server sync (guarantees cross-device sync even if Firestore quota is exceeded)
   postToServerSync("/api/sync/attendance", { record: fullRecord });
 
-  // 3. Persist to Firestore (safeguarded non-blocking timeout)
+  // 4. Persist to Firestore (safeguarded non-blocking timeout)
   const docRef = doc(db, ATTENDANCE_COLL, recordId);
   await safeFirestoreWrite(setDoc(docRef, fullRecord, { merge: true }), 2500);
 }
