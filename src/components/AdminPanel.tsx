@@ -1248,10 +1248,10 @@ export default function AdminPanel({
       todayAttendance.forEach(rec => {
         if (!rec.isNoAbsence && Array.isArray(rec.absent)) {
           rec.absent.forEach(id => {
-            if (!id) return;
+            if (!id || id === "no-absence") return;
             const studentObj = Array.isArray(students) ? students.find(s => s && (s.id === id || s.name === id)) : undefined;
-            const canonicalKey = studentObj ? `sid_${studentObj.id}` : `norm_${normalizeArabic(id).replace(/\s+/g, ' ').trim()}`;
-            if (canonicalKey) todayAbsentSet.add(canonicalKey);
+            const canonicalKey = studentObj ? `sid_${studentObj.id}` : `sid_${id}`;
+            todayAbsentSet.add(canonicalKey);
           });
         }
       });
@@ -3156,20 +3156,18 @@ export default function AdminPanel({
                 // Helper to get robust canonical key for a student to prevent duplicate names
                 const getCanonicalStudentKey = (entry: any): string => {
                   if (entry.isNoAbsenceDummy) return `no_abs_${entry.id || Math.random()}`;
+                  const rawId = (entry.studentId || "").trim();
+                  if (rawId && rawId !== "no-absence") {
+                    return `sid_${rawId}`;
+                  }
                   const rawName = (entry.studentName || "").trim();
                   const normName = normalizeArabic(rawName).replace(/\s+/g, ' ');
-                  const rawId = (entry.studentId || "").trim();
-
-                  if (rawId) {
-                    const matchedById = students.find(s => s && (s.id === rawId || s.name === rawId));
-                    if (matchedById) return `sid_${matchedById.id}`;
-                  }
                   if (normName) {
                     const matchedByName = students.find(s => s && normalizeArabic(s.name || "").replace(/\s+/g, ' ') === normName);
                     if (matchedByName) return `sid_${matchedByName.id}`;
+                    return `name_${normName}`;
                   }
-                  if (normName) return `name_${normName}`;
-                  return rawId ? `raw_${rawId}` : `entry_${entry.id}`;
+                  return `entry_${entry.id || Math.random()}`;
                 };
 
                 // Display all absent and late students across all periods for the selected date

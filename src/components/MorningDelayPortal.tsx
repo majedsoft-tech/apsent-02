@@ -124,7 +124,18 @@ export default function MorningDelayPortal({
   useEffect(() => {
     setLoading(true);
     const unsub = subscribeToMorningDelayRecords(selectedDate, (newRecords) => {
-      setRecords(newRecords);
+      setRecords(prev => {
+        const safeNew = Array.isArray(newRecords) ? newRecords : [];
+        const serverIds = new Set(safeNew.map(r => r.studentId));
+        // Preserve optimistic records that are in-flight (< 20s old) and not yet returned from server
+        const freshOptimistic = prev.filter(r => {
+          if (!r || !r.studentId) return false;
+          if (serverIds.has(r.studentId)) return false;
+          const age = Date.now() - (r.timestamp || 0);
+          return age < 20000;
+        });
+        return [...freshOptimistic, ...safeNew];
+      });
       setLoading(false);
     }, (_err) => {
       setLoading(false);
@@ -202,10 +213,10 @@ export default function MorningDelayPortal({
 
   // Quick record handler for a student - Records exact real-time on click instantly!
   const handleRecordStudent = async (student: Student, overrideReason?: string) => {
-    if (!isGoogleAuthenticated && !isDirectLink) {
-      onRequireGoogleLogin?.();
-      return;
-    }
+    if (!student || !student.id) return;
+    if (savingStudentId === student.id) return;
+    setSavingStudentId(student.id);
+
     const gr = grades.find(g => g.id === student.gradeId);
     const cl = classes.find(c => c.id === student.classId);
     const finalReason = overrideReason || (selectedReason === "أخرى" ? (customReason || "أخرى") : selectedReason);
@@ -214,6 +225,7 @@ export default function MorningDelayPortal({
     const exactRecordTime = getCurrentTimeString();
     setArrivalTime(exactRecordTime);
 
+    const canonicalRecordId = `delay_${selectedDate}_${student.id}`;
     const recordPayload = {
       studentId: student.id,
       studentName: student.name,
@@ -229,11 +241,10 @@ export default function MorningDelayPortal({
       notes: notes.trim()
     };
 
-    // Optimistic instant UI update (0ms delay)
-    const tempId = "delay_" + student.id + "_" + Date.now();
+    // Optimistic instant UI update (0ms delay) with canonical ID
     const optimisticRecord: MorningDelayRecord = {
       ...recordPayload,
-      id: tempId,
+      id: canonicalRecordId,
       timestamp: Date.now()
     };
 
@@ -248,21 +259,16 @@ export default function MorningDelayPortal({
 
     // Background persistent save
     try {
-      const realId = await saveMorningDelayRecord(recordPayload);
-      if (realId && realId !== tempId) {
-        setRecords(prev => prev.map(r => r.id === tempId ? { ...r, id: realId } : r));
-      }
+      await saveMorningDelayRecord(recordPayload);
     } catch (err) {
       console.error("Error saving morning delay:", err);
+    } finally {
+      setSavingStudentId(null);
     }
   };
 
   // Delete Record Handler - opens custom in-app confirmation modal
   const handleDeleteRecord = (recordId: string, studentName?: string, studentId?: string, date?: string) => {
-    if (!isGoogleAuthenticated && !isDirectLink) {
-      onRequireGoogleLogin?.();
-      return;
-    }
     setConfirmDeleteState({
       recordId,
       studentName: studentName || "الطالب",
@@ -532,18 +538,13 @@ export default function MorningDelayPortal({
                         <div
                           key={st.id}
                           onClick={() => {
-                            if (isSaving) return;
-                            if (isRecorded) {
-                              const currentRec = rec || records.find(r => r.studentId === st.id);
-                              if (currentRec) {
-                                handleDeleteRecord(currentRec.id, st.name, currentRec.studentId || st.id, currentRec.date || selectedDate);
-                              }
-                            } else {
-                              handleRecordStudent(st);
-                            }
+                            if (isSaving || isRecorded) return;
+                            handleRecordStudent(st);
                           }}
-                          className={`p-2.5 sm:px-4 sm:py-3 w-full max-w-full cursor-pointer transition select-none active:scale-[0.99] active:bg-slate-100/80 ${
-                            isRecorded ? "bg-amber-50/70 hover:bg-amber-100/60" : "bg-white hover:bg-slate-50"
+                          className={`p-2.5 sm:px-4 sm:py-3 w-full max-w-full transition select-none ${
+                            isRecorded 
+                              ? "bg-amber-50/80 border-r-4 border-amber-500" 
+                              : "bg-white hover:bg-slate-50 cursor-pointer active:scale-[0.99] active:bg-slate-100/80"
                           }`}
                         >
                           {/* Primary line: Student index, name, and action / desktop badges */}
@@ -645,11 +646,11 @@ export default function MorningDelayPortal({
                       return (
                         <div
                           key={st.id}
-                          onClick={() => !isSaving && handleRecordStudent(st)}
-                          className={`p-2.5 sm:p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-1.5 select-none relative min-h-[72px] ${
+                          onClick={() => !isSaving && !isRecorded && handleRecordStudent(st)}
+                          className={`p-2.5 sm:p-3 rounded-xl border transition-all flex flex-col justify-between gap-1.5 select-none relative min-h-[72px] ${
                             isRecorded
-                              ? "bg-amber-50/90 border-amber-300 ring-1 ring-amber-400/40 shadow-3xs"
-                              : "bg-slate-50/70 border-slate-200/90 hover:bg-white hover:border-amber-400 hover:shadow-xs"
+                              ? "bg-amber-50/90 border-amber-300 ring-1 ring-amber-400/40 shadow-3xs cursor-default"
+                              : "bg-slate-50/70 border-slate-200/90 hover:bg-white hover:border-amber-400 hover:shadow-xs cursor-pointer active:scale-[0.98]"
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1.5 min-w-0">

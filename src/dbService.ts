@@ -295,6 +295,22 @@ export function isMorningDelayDeleted(date?: string, studentId?: string): boolea
   return false;
 }
 
+export function unrecordDeletedMorningDelay(date: string, studentId: string): void {
+  if (!date || !studentId) return;
+  const key = `${date}:${studentId}`;
+  memoryDeletedDelays.delete(key);
+  unmarkDeletedId("morning_delays", `delay_${date}_${studentId}`);
+  if (typeof window === "undefined") return;
+  try {
+    const raw = localStorage.getItem(DELETED_DELAYS_KEY);
+    if (raw) {
+      const list: string[] = JSON.parse(raw);
+      const filtered = list.filter(k => k !== key && k !== `delay_${date}_${studentId}`);
+      localStorage.setItem(DELETED_DELAYS_KEY, JSON.stringify(filtered));
+    }
+  } catch (_) {}
+}
+
 // Helper to sanitize an attendance record against deleted student absences/lates
 export function sanitizeAttendanceRecord(record: any): any {
   if (!record) return record;
@@ -1080,7 +1096,15 @@ export function initServerSyncEngine(): void {
             const items = Array.isArray(payload.data?.records)
               ? payload.data.records
               : (Array.isArray(payload.data) ? payload.data : (payload.data ? [payload.data] : []));
-            const valid = items.filter((d: any) => d && d.id && !isIdDeleted(MORNING_DELAYS_COLL, d.id) && !isMorningDelayDeleted(d.date, d.studentId));
+            items.forEach((d: any) => {
+              if (d && d.id) {
+                unmarkDeletedId(MORNING_DELAYS_COLL, d.id);
+                if (d.date && d.studentId) {
+                  unrecordDeletedMorningDelay(d.date, d.studentId);
+                }
+              }
+            });
+            const valid = items.filter((d: any) => d && d.id);
             if (valid.length > 0) {
               bulkSaveOrUpdateLocalItems(MORNING_DELAYS_COLL, valid);
             }
@@ -2751,13 +2775,24 @@ export function subscribeToAttendanceRecord(
 ) {
   const normPeriod = normalizePeriodKey(period);
   return subscribeToCollection(ATTENDANCE_COLL, (records) => {
-    const found = records.find(r => 
+    const matching = (Array.isArray(records) ? records : []).filter(r => 
+      r &&
       r.date === date && 
       normalizePeriodKey(r.period) === normPeriod && 
       (r.gradeId === gradeId || normalizeKey(r.gradeId) === normalizeKey(gradeId)) && 
       (r.classId === classId || normalizeKey(r.classId) === normalizeKey(classId))
-    ) || null;
-    callback(found);
+    );
+    if (matching.length === 0) {
+      callback(null);
+      return;
+    }
+    // Always pick the newest authoritative record by updatedAt / timestamp
+    matching.sort((a, b) => {
+      const timeA = typeof a.updatedAt === "number" ? a.updatedAt : (typeof a.timestamp === "number" ? a.timestamp : 0);
+      const timeB = typeof b.updatedAt === "number" ? b.updatedAt : (typeof b.timestamp === "number" ? b.timestamp : 0);
+      return timeB - timeA;
+    });
+    callback(matching[0]);
   }, onError);
 }
 
@@ -2795,7 +2830,8 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
   }
 
   // Deterministic canonical ID per slot scoped to tenant to guarantee 100% isolation across schools
-  const tenantPrefix = email ? email.replace(/[^a-zA-Z0-9]/g, '_') : (uid || "school");
+  const canonicalSchool = getSchoolCode() || email || uid || "school";
+  const tenantPrefix = canonicalSchool.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
   const normPeriod = normalizePeriodKey(record.period);
   const recordId = `att_${tenantPrefix}_${record.date}_p${normPeriod}_${record.gradeId}_${record.classId}`;
 
@@ -2821,6 +2857,16 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
       unrecordDeletedAttendanceEntry(recordId, stId);
     });
   }
+
+  // Purge any older/conflicting records for the exact same slot with different prefix from local items
+  removeLocalItemsBy(ATTENDANCE_COLL, (r) => 
+    r && r.id !== recordId && 
+    r.date === record.date && 
+    normalizePeriodKey(r.period) === normPeriod && 
+    (r.gradeId === record.gradeId || normalizeKey(r.gradeId) === normalizeKey(record.gradeId)) && 
+    (r.classId === record.classId || normalizeKey(r.classId) === normalizeKey(record.classId)),
+    uid
+  );
 
   // 2. Save to local storage cache immediately (0ms)
   saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord, uid);
@@ -3136,6 +3182,10 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
   // Deterministic canonical record ID per student per day for rock-solid cross-device sync
   const recordId = `delay_${record.date}_${record.studentId}`;
 
+  // Unmark tombstone so re-recording this delay is never dropped or auto-deleted!
+  unmarkDeletedId(MORNING_DELAYS_COLL, recordId);
+  unrecordDeletedMorningDelay(record.date, record.studentId);
+
   const fullRecord: MorningDelayRecord = {
     ...record,
     id: recordId,
@@ -3193,6 +3243,12 @@ export async function saveMorningDelaysBatch(records: Omit<MorningDelayRecord, "
   }
 
   const schoolCode = getSchoolCode();
+
+  // Unmark tombstones for all batch records
+  records.forEach(r => {
+    unmarkDeletedId(MORNING_DELAYS_COLL, `delay_${r.date}_${r.studentId}`);
+    unrecordDeletedMorningDelay(r.date, r.studentId);
+  });
 
   // Local cache update
   const fullRecords: any[] = [];
@@ -4722,13 +4778,12 @@ export function subscribeToStudents(callback: (students: Student[]) => void, onE
   return subscribeToCollection(STUDENTS_COLL, (data) => {
     const list = Array.isArray(data) ? data : [];
     const normalized = list.map(normalizeStudentData);
-    const seenNames = new Set<string>();
+    const seenIds = new Set<string>();
     const uniqueStudents: Student[] = [];
     for (const s of normalized) {
       if (!s || !s.id || isIdDeleted("students", s.id)) continue;
-      const nameKey = (s.name || "").trim().toLowerCase();
-      if (!nameKey || seenNames.has(nameKey)) continue;
-      seenNames.add(nameKey);
+      if (seenIds.has(s.id)) continue;
+      seenIds.add(s.id);
       uniqueStudents.push(s);
     }
     callback(uniqueStudents);

@@ -582,15 +582,11 @@ export default function App() {
 
   const deduplicateStudents = (arr: Student[]): Student[] => {
     if (!Array.isArray(arr)) return [];
-    const seenNames = new Set<string>();
     const seenIds = new Set<string>();
     return arr.filter(student => {
-      if (!student) return false;
-      const cleanName = (student.name || "").trim().toLowerCase();
-      if (cleanName && seenNames.has(cleanName)) return false;
-      if (student.id && seenIds.has(student.id)) return false;
-      if (cleanName) seenNames.add(cleanName);
-      if (student.id) seenIds.add(student.id);
+      if (!student || !student.id) return false;
+      if (seenIds.has(student.id)) return false;
+      seenIds.add(student.id);
       return true;
     });
   };
@@ -2092,7 +2088,7 @@ export default function App() {
                 onRefreshData={handleRefreshData}
                 navigateTo={navigateTo}
                 schoolName={schoolName}
-                isDirectLink={isDirectMorningDelayLink}
+                isDirectLink={isDirectMorningDelayLink || appMode === "morning-delay"}
                 globalProgress={globalProgress}
                 setGlobalProgress={setGlobalProgress}
                 isGoogleAuthenticated={!!currentUser && !currentUser.isGuest}
