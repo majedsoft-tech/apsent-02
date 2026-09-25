@@ -81,7 +81,7 @@ interface AdminPanelProps {
   activeSubTab?: "stats" | "grades" | "teachers" | "students";
   setActiveSubTab?: (tab: "stats" | "grades" | "teachers" | "students") => void;
   isReadOnly?: boolean;
-  onTodayStatsChange?: (stats: { absentCount: number; behaviorCount: number }) => void;
+  onTodayStatsChange?: (stats: { absentCount: number; delayCount?: number; behaviorCount: number }) => void;
   schoolName?: string;
   onSchoolNameChange?: (name: string) => void;
   isSavingSchoolName?: boolean;
@@ -365,6 +365,7 @@ export default function AdminPanel({
 
   const [todayStats, setTodayStats] = useState({
     absentCount: 0,
+    delayCount: 0,
     behaviorCount: 0,
     grade1Entries: [] as any[],
     grade2Entries: [] as any[],
@@ -1245,6 +1246,8 @@ export default function AdminPanel({
 
       // Absent on selected date (unique student counts by canonical identity)
       const todayAbsentSet = new Set<string>();
+      const todayDelaySet = new Set<string>();
+
       todayAttendance.forEach(rec => {
         if (!rec.isNoAbsence && Array.isArray(rec.absent)) {
           rec.absent.forEach(id => {
@@ -1254,8 +1257,36 @@ export default function AdminPanel({
             todayAbsentSet.add(canonicalKey);
           });
         }
+        if (Array.isArray(rec.late)) {
+          rec.late.forEach(id => {
+            if (!id) return;
+            const studentObj = Array.isArray(students) ? students.find(s => s && (s.id === id || s.name === id)) : undefined;
+            const canonicalKey = studentObj ? `sid_${studentObj.id}` : `sid_${id}`;
+            todayDelaySet.add(canonicalKey);
+            // Delay is NOT absence - remove late students from absence set
+            todayAbsentSet.delete(canonicalKey);
+            todayAbsentSet.delete(`sid_${id}`);
+            todayAbsentSet.delete(id);
+          });
+        }
       });
+
+      // Morning delays: students arrived at school late. They are LATE, NOT ABSENT!
+      const safeDelaysList = Array.isArray(delays) ? delays : [];
+      const matchingDelays = safeDelaysList.filter(d => d && d.date && d.date.trim() === TARGET_DATE);
+      matchingDelays.forEach(d => {
+        if (!d || !d.studentId) return;
+        const studentObj = Array.isArray(students) ? students.find(s => s && (s.id === d.studentId || s.name === d.studentId)) : undefined;
+        const canonicalKey = studentObj ? `sid_${studentObj.id}` : `sid_${d.studentId}`;
+        todayDelaySet.add(canonicalKey);
+        // Exclude morning delay students completely from absence set
+        todayAbsentSet.delete(canonicalKey);
+        todayAbsentSet.delete(`sid_${d.studentId}`);
+        todayAbsentSet.delete(d.studentId);
+      });
+
       const absentCount = todayAbsentSet.size;
+      const delayCount = todayDelaySet.size;
       const behaviorCount = todayBehaviorsList.length;
 
       // Check if new behavior records were added by a teacher (alert only newly added behaviors)
@@ -1794,6 +1825,7 @@ export default function AdminPanel({
       setTodayStats(prev => {
         if (
           prev.absentCount === absentCount &&
+          prev.delayCount === delayCount &&
           prev.behaviorCount === behaviorCount &&
           prev.grade1Entries.length === g1Entries.length &&
           prev.grade2Entries.length === g2Entries.length &&
@@ -1803,6 +1835,7 @@ export default function AdminPanel({
         }
         return {
           absentCount,
+          delayCount,
           behaviorCount,
           grade1Entries: g1Entries,
           grade2Entries: g2Entries,
@@ -1812,7 +1845,7 @@ export default function AdminPanel({
       });
 
       if (onTodayStatsChange) {
-        onTodayStatsChange({ absentCount, behaviorCount });
+        onTodayStatsChange({ absentCount, delayCount, behaviorCount });
       }
     } catch (e) {
       console.error("Error computing stats:", e);
@@ -3146,6 +3179,11 @@ export default function AdminPanel({
                   <span className="bg-rose-50 text-rose-700 border border-rose-200/80 px-2.5 py-1 rounded-lg font-black shadow-3xs">
                     {todayStats.absentCount} طالب غائب
                   </span>
+                  {todayStats.delayCount > 0 && (
+                    <span className="bg-amber-50 text-amber-800 border border-amber-200/80 px-2.5 py-1 rounded-lg font-black shadow-3xs">
+                      {todayStats.delayCount} طالب متأخر
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -3257,7 +3295,7 @@ export default function AdminPanel({
                         ) : (
                           gradeClasses.map(cls => {
                             const cCode = getClassCode(cls.name);
-                            const count = displayEntries.filter((entry: any) => entry.classId === cls.id && (entry.isAbsent || entry.isLate)).length;
+                            const count = displayEntries.filter((entry: any) => entry.classId === cls.id && entry.isAbsent && !entry.isNoAbsenceDummy).length;
                             const hasAbsence = count > 0;
                             return (
                               <span

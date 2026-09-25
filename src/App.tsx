@@ -364,14 +364,19 @@ export default function App() {
   const [isSchoolModalOpen, setIsSchoolModalOpen] = useState<boolean>(false);
   const [schoolModalInput, setSchoolModalInput] = useState<string>("");
   const [isRefreshingData, setIsRefreshingData] = useState<boolean>(false);
-  const [todayCounts, setTodayCounts] = useState<{ absentCount: number; behaviorCount: number }>({ absentCount: 0, behaviorCount: 0 });
+  const [todayCounts, setTodayCounts] = useState<{ absentCount: number; delayCount: number; behaviorCount: number }>({ absentCount: 0, delayCount: 0, behaviorCount: 0 });
 
-  const handleTodayStatsChange = useCallback((newStats: { absentCount: number; behaviorCount: number }) => {
+  const handleTodayStatsChange = useCallback((newStats: { absentCount: number; delayCount?: number; behaviorCount: number }) => {
     setTodayCounts(prev => {
-      if (prev.absentCount === newStats.absentCount && prev.behaviorCount === newStats.behaviorCount) {
+      const delayCount = newStats.delayCount ?? prev.delayCount ?? 0;
+      if (prev.absentCount === newStats.absentCount && prev.delayCount === delayCount && prev.behaviorCount === newStats.behaviorCount) {
         return prev;
       }
-      return newStats;
+      return {
+        absentCount: newStats.absentCount,
+        delayCount,
+        behaviorCount: newStats.behaviorCount
+      };
     });
   }, []);
 
@@ -746,6 +751,7 @@ export default function App() {
       const computeLiveTodayCounts = () => {
         const todayStr = new Date().toISOString().split("T")[0];
         const absentStudentIds = new Set<string>();
+        const delayStudentIds = new Set<string>();
 
         latestAttendance.forEach((rec: any) => {
           if (rec && rec.date === todayStr) {
@@ -754,23 +760,36 @@ export default function App() {
                 if (sId && sId !== "no-absence") absentStudentIds.add(sId);
               });
             }
+            if (Array.isArray(rec.late)) {
+              rec.late.forEach((sId: string) => {
+                if (sId) {
+                  delayStudentIds.add(sId);
+                  // Student is late, NOT absent
+                  absentStudentIds.delete(sId);
+                }
+              });
+            }
           }
         });
 
+        // Morning delays: students arrived at school late. They are LATE, NOT ABSENT!
         latestDelays.forEach((del: any) => {
           if (del && del.date === todayStr && del.studentId) {
-            absentStudentIds.add(del.studentId);
+            delayStudentIds.add(del.studentId);
+            // If mistakenly marked absent earlier, remove them because they arrived late
+            absentStudentIds.delete(del.studentId);
           }
         });
 
         const behaviorCount = latestBehaviors.filter((b: any) => b && b.date === todayStr).length;
 
         setTodayCounts(prev => {
-          if (prev.absentCount === absentStudentIds.size && prev.behaviorCount === behaviorCount) {
+          if (prev.absentCount === absentStudentIds.size && prev.delayCount === delayStudentIds.size && prev.behaviorCount === behaviorCount) {
             return prev;
           }
           return {
             absentCount: absentStudentIds.size,
+            delayCount: delayStudentIds.size,
             behaviorCount
           };
         });
@@ -1923,7 +1942,7 @@ export default function App() {
                   setTeachers([]);
                   setStudents([]);
                   setSchoolName("");
-                  setTodayCounts({ absentCount: 0, behaviorCount: 0 });
+                  setTodayCounts({ absentCount: 0, delayCount: 0, behaviorCount: 0 });
                   setAppMode("admin");
                   setAdminTab("stats");
                   window.history.replaceState({ mode: "admin" }, "", "/?page=admin&tab=stats#/index");
@@ -2014,6 +2033,7 @@ export default function App() {
               isRefreshing={isRefreshingData}
               onOpenShareModal={() => setIsShareModalOpen(true)}
               todayAbsentCount={todayCounts.absentCount}
+              todayDelayCount={todayCounts.delayCount}
               todayBehaviorCount={todayCounts.behaviorCount}
               currentTime={currentTime}
               currentUser={currentUser}
@@ -2230,7 +2250,7 @@ export default function App() {
           setTeachers([]);
           setStudents([]);
           setSchoolName("");
-          setTodayCounts({ absentCount: 0, behaviorCount: 0 });
+          setTodayCounts({ absentCount: 0, delayCount: 0, behaviorCount: 0 });
           setAppMode("admin");
           setAdminTab("stats");
           window.history.replaceState({ mode: "admin" }, "", "/admin?page=admin&tab=stats#/admin");
