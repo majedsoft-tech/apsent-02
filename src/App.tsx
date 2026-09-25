@@ -31,6 +31,7 @@ import {
   getSchoolCode,
   setSchoolCode,
   initServerSyncEngine,
+  refreshServerSyncConnection,
   bootstrapSchoolToServer,
   ensureRegisteredSchoolLoaded,
   isIdDeleted
@@ -145,8 +146,11 @@ function getInitialCachedUser(): any {
     const searchParams = new URLSearchParams(window.location.search);
     const hashIndex = window.location.hash.indexOf("?");
     const hashParams = hashIndex !== -1 ? new URLSearchParams(window.location.hash.substring(hashIndex)) : null;
-    const urlUid = (searchParams.get("owner") || searchParams.get("ownerId") || searchParams.get("uid") || hashParams?.get("owner") || hashParams?.get("ownerId") || hashParams?.get("uid") || "").trim();
-    const urlEmail = (searchParams.get("email") || searchParams.get("ownerEmail") || searchParams.get("userEmail") || hashParams?.get("email") || hashParams?.get("ownerEmail") || hashParams?.get("userEmail") || "").trim().toLowerCase();
+    const rawSchoolCode = (searchParams.get("schoolCode") || searchParams.get("code") || searchParams.get("schoolId") || hashParams?.get("schoolCode") || hashParams?.get("code") || hashParams?.get("schoolId") || "").trim();
+    let urlUid = (searchParams.get("owner") || searchParams.get("ownerId") || searchParams.get("uid") || hashParams?.get("owner") || hashParams?.get("ownerId") || hashParams?.get("uid") || rawSchoolCode).trim();
+    let urlEmail = (searchParams.get("email") || searchParams.get("ownerEmail") || searchParams.get("userEmail") || hashParams?.get("email") || hashParams?.get("ownerEmail") || hashParams?.get("userEmail") || (rawSchoolCode.includes("@") ? rawSchoolCode : "")).trim().toLowerCase();
+    try { urlUid = decodeURIComponent(urlUid); } catch (_) {}
+    try { urlEmail = decodeURIComponent(urlEmail); } catch (_) {}
     const urlSchool = searchParams.get("school") || searchParams.get("schoolName") || hashParams?.get("school") || hashParams?.get("schoolName");
     if (urlUid || urlEmail) {
       return {
@@ -431,6 +435,7 @@ export default function App() {
           };
           setActiveUser(directUser);
           setCurrentUser(directUser);
+          refreshServerSyncConnection();
           if (resolved.schoolName) {
             setSchoolName(resolved.schoolName);
           }
@@ -463,6 +468,7 @@ export default function App() {
 
             setCurrentUser(user);
             setActiveUser(user);
+            refreshServerSyncConnection();
             try {
               localStorage.setItem("last_active_school_owner", JSON.stringify({ uid: user.uid, email: user.email || "" }));
               if (user.email) {
@@ -1089,6 +1095,7 @@ export default function App() {
       if (user) {
         setCurrentUser(user);
         setActiveUser(user);
+        refreshServerSyncConnection();
         try {
           localStorage.setItem("last_active_school_owner", JSON.stringify({ uid: user.uid, email: user.email || "" }));
           if (user.email) {

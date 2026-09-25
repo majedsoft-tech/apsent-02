@@ -874,6 +874,15 @@ interface CollectionHub {
 
 const collectionHubs = new Map<string, CollectionHub>();
 
+export function safeDecode(val?: string): string {
+  if (!val) return "";
+  try {
+    return decodeURIComponent(val).toLowerCase().trim();
+  } catch (_) {
+    return (val || "").toLowerCase().trim();
+  }
+}
+
 // Cross-tab and Cross-Window Real-time Broadcast Channel for instant (0ms) sync
 let realTimeSyncChannel: BroadcastChannel | null = null;
 if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
@@ -884,12 +893,15 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
       if (!data) return;
 
       const eff = getEffectiveUidAndEmail();
-      const myEmail = (eff.email || "").toLowerCase().trim();
+      const myEmail = safeDecode(eff.email);
       const myUid = (eff.uid || "").trim();
-      const mySchoolCode = getSchoolCode().toLowerCase().trim();
-      const msgEmail = (data.ownerEmail || "").toLowerCase().trim();
+      const mySchoolCode = safeDecode(getSchoolCode());
+      const msgEmail = safeDecode(data.ownerEmail);
       const msgUid = (data.ownerUid || "").trim();
-      const msgSchoolCode = (data.schoolCode || "").toLowerCase().trim();
+      const msgSchoolCode = safeDecode(data.schoolCode);
+
+      const isMyGuest = !myEmail || myEmail.includes("@school.local") || myEmail.includes("@school.com") || myUid.startsWith("guest");
+      const isMsgGuest = !msgEmail || msgEmail.includes("@school.local") || msgEmail.includes("@school.com") || msgUid.startsWith("guest");
 
       const isMatch = (mySchoolCode && msgSchoolCode && mySchoolCode === msgSchoolCode) ||
                       (mySchoolCode && msgEmail && mySchoolCode === msgEmail) ||
@@ -900,7 +912,7 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
                       (myUid && msgUid && myUid === msgUid) ||
                       (myEmail && msgUid && userProfileAliasCache.get(myEmail)?.uid === msgUid) ||
                       (myUid && msgEmail && userProfileAliasCache.get(myUid.toLowerCase())?.email === msgEmail) ||
-                      (!myEmail && !myUid && (msgEmail || msgUid || msgSchoolCode));
+                      isMyGuest || isMsgGuest;
 
       if (!isMatch) return;
 
@@ -913,6 +925,7 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
           localStorage.setItem("school_name_cached", newName);
           try {
             window.dispatchEvent(new CustomEvent("school_name_updated", { detail: newName }));
+            window.dispatchEvent(new CustomEvent("school_refresh_stats"));
           } catch (_) {}
         }
         return;
@@ -925,6 +938,10 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
             removeLocalItemsBy(ATTENDANCE_COLL, r => r.id === delId || r._docId === delId);
           });
         }
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, type: data.type } }));
+        } catch (_) {}
         return;
       }
 
@@ -935,6 +952,10 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
             saveOrUpdateLocalItem(ATTENDANCE_COLL, data.updatedRecord);
           }
         }
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, type: data.type } }));
+        } catch (_) {}
         return;
       }
 
@@ -949,11 +970,33 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
           recordDeletedMorningDelay(data.date, data.studentId);
           removeLocalItemsBy(MORNING_DELAYS_COLL, d => d.studentId === data.studentId && d.date === data.date);
         }
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: data.type } }));
+        } catch (_) {}
+        return;
+      }
+
+      if (data.type === "behavior_deleted") {
+        if (Array.isArray(data.deletedIds)) {
+          data.deletedIds.forEach((delId: string) => {
+            recordDeletedId(BEHAVIORS_COLL, delId);
+            removeLocalItemsBy(BEHAVIORS_COLL, b => b.id === delId || b._docId === delId);
+          });
+        }
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: BEHAVIORS_COLL, type: data.type } }));
+        } catch (_) {}
         return;
       }
 
       if (data.colName) {
         notifyCollectionSubscribers(data.colName, data.items, true);
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: data.colName, type: data.type || "update" } }));
+        } catch (_) {}
       }
     };
   } catch (e) {}
@@ -972,7 +1015,7 @@ if (typeof window !== "undefined") {
       if (colName) {
         const eff = getEffectiveUidAndEmail();
         const currentUid = eff.uid;
-        const currentEmail = (eff.email || "").toLowerCase().trim();
+        const currentEmail = safeDecode(eff.email);
         if (!currentUid && !currentEmail) return;
 
         const matchesUser = (currentEmail && e.key.includes(`_${currentEmail}_`)) || 
@@ -981,7 +1024,11 @@ if (typeof window !== "undefined") {
           clearTimeout(storageDebounceTimer);
           storageDebounceTimer = setTimeout(() => {
             notifyCollectionSubscribers(colName, undefined, true);
-          }, 200);
+            try {
+              window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+              window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName } }));
+            } catch (_) {}
+          }, 100);
         }
       }
     }
@@ -1001,26 +1048,41 @@ export async function postToServerSync(endpoint: string, payload: any): Promise<
 }
 
 let serverSyncEngineInitialized = false;
+let currentEvtSource: EventSource | null = null;
+let sseReconnectTimer: any = null;
+let pollServer: () => Promise<void> = async () => {};
 
-export function initServerSyncEngine(): void {
-  if (typeof window === "undefined" || serverSyncEngineInitialized) return;
-  serverSyncEngineInitialized = true;
+export function refreshServerSyncConnection(): void {
+  if (typeof window === "undefined") return;
+  connectSSE();
+}
 
-  const schoolCode = getSchoolCode();
+function connectSSE(): void {
+  if (typeof window === "undefined") return;
+  if (currentEvtSource) {
+    try { currentEvtSource.close(); } catch (_) {}
+    currentEvtSource = null;
+  }
+  clearTimeout(sseReconnectTimer);
+
+  const schoolCode = safeDecode(getSchoolCode());
   const eff = getEffectiveUidAndEmail();
   const queryParams = new URLSearchParams();
   if (schoolCode) queryParams.set("schoolCode", schoolCode);
-  if (eff.email) queryParams.set("email", eff.email);
-  if (eff.uid) queryParams.set("uid", eff.uid);
+  if (eff.email && !eff.isGuest && !eff.email.includes("@school.local")) queryParams.set("email", safeDecode(eff.email));
+  if (eff.uid && !eff.isGuest && !eff.uid.startsWith("guest")) queryParams.set("uid", eff.uid);
 
   // 1. Connect to SSE stream for 0ms instant broadcast from other devices
   try {
     const sseUrl = `/api/sync/stream?${queryParams.toString()}`;
     const evtSource = new EventSource(sseUrl);
+    currentEvtSource = evtSource;
 
     evtSource.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data);
+        if (payload.type === "ping" || payload.type === "connected") return;
+
         if (payload.type === "purge_all") {
           const cols = [GRADES_COLL, CLASSES_COLL, TEACHERS_COLL, STUDENTS_COLL, ATTENDANCE_COLL, BEHAVIORS_COLL, MORNING_DELAYS_COLL, SETTINGS_COLL];
           cols.forEach(colName => {
@@ -1034,6 +1096,7 @@ export function initServerSyncEngine(): void {
           });
           try {
             window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { type: "purge_all" } }));
           } catch (_) {}
           return;
         }
@@ -1059,6 +1122,10 @@ export function initServerSyncEngine(): void {
               bulkSaveOrUpdateLocalItems(ATTENDANCE_COLL, sanitized);
             }
           }
+          try {
+            window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL } }));
+          } catch (_) {}
         } else if (payload.type === "behavior_updated") {
           if (payload.data?.clearAll) {
             setLocalItems(BEHAVIORS_COLL, []);
@@ -1078,6 +1145,10 @@ export function initServerSyncEngine(): void {
               bulkSaveOrUpdateLocalItems(BEHAVIORS_COLL, valid);
             }
           }
+          try {
+            window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: BEHAVIORS_COLL } }));
+          } catch (_) {}
         } else if (payload.type === "delay_updated") {
           if (payload.data?.clearAll) {
             setLocalItems(MORNING_DELAYS_COLL, []);
@@ -1109,6 +1180,10 @@ export function initServerSyncEngine(): void {
               bulkSaveOrUpdateLocalItems(MORNING_DELAYS_COLL, valid);
             }
           }
+          try {
+            window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL } }));
+          } catch (_) {}
         } else if (payload.type === "school_updated") {
           if (payload.data?.cleared) {
             const currentEff = getEffectiveUidAndEmail();
@@ -1144,6 +1219,9 @@ export function initServerSyncEngine(): void {
               bulkSaveOrUpdateLocalItems(GRADES_COLL, valid);
             }
           }
+          try {
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: GRADES_COLL } }));
+          } catch (_) {}
         } else if (payload.type === "classes_updated") {
           if (payload.data?.clearAll) {
             setLocalItems(CLASSES_COLL, []);
@@ -1160,6 +1238,9 @@ export function initServerSyncEngine(): void {
               bulkSaveOrUpdateLocalItems(CLASSES_COLL, valid);
             }
           }
+          try {
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: CLASSES_COLL } }));
+          } catch (_) {}
         } else if (payload.type === "teachers_updated") {
           if (payload.data?.clearAll) {
             setLocalItems(TEACHERS_COLL, []);
@@ -1176,6 +1257,9 @@ export function initServerSyncEngine(): void {
               bulkSaveOrUpdateLocalItems(TEACHERS_COLL, valid);
             }
           }
+          try {
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: TEACHERS_COLL } }));
+          } catch (_) {}
         } else if (payload.type === "students_updated") {
           if (payload.data?.clearAll) {
             setLocalItems(STUDENTS_COLL, []);
@@ -1192,6 +1276,9 @@ export function initServerSyncEngine(): void {
               bulkSaveOrUpdateLocalItems(STUDENTS_COLL, valid);
             }
           }
+          try {
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: STUDENTS_COLL } }));
+          } catch (_) {}
         } else if (payload.type === "bootstrap_updated") {
           pollServer();
         }
@@ -1199,19 +1286,33 @@ export function initServerSyncEngine(): void {
     };
 
     evtSource.onerror = () => {
-      evtSource.close();
+      try { evtSource.close(); } catch (_) {}
+      currentEvtSource = null;
+      clearTimeout(sseReconnectTimer);
+      // Auto-reconnect after 2 seconds to guarantee stream resilience
+      sseReconnectTimer = setTimeout(() => {
+        connectSSE();
+      }, 2000);
     };
-  } catch (_) {}
+  } catch (_) {
+    clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = setTimeout(() => {
+      connectSSE();
+    }, 4000);
+  }
+}
 
-  // 2. Periodic unified polling sync fallback to guarantee cross-device updates without main thread freezing
-  const pollServer = async () => {
+export function initServerSyncEngine(): void {
+  if (typeof window === "undefined" || serverSyncEngineInitialized) return;
+  serverSyncEngineInitialized = true;
+
+  connectSSE();
+
+  pollServer = async () => {
     try {
       const code = getSchoolCode();
       const currentEff = getEffectiveUidAndEmail();
       const q = new URLSearchParams();
-      if (code) q.set("schoolCode", code);
-      if (currentEff.email && !currentEff.isGuest && !currentEff.email.includes("@school.local")) q.set("email", currentEff.email);
-      if (currentEff.uid && !currentEff.isGuest && !currentEff.uid.startsWith("guest")) q.set("uid", currentEff.uid);
 
       const res = await fetch(`/api/sync/all?${q.toString()}`);
       if (res.ok) {
@@ -1403,7 +1504,7 @@ export function initServerSyncEngine(): void {
   };
 
   pollServer();
-  setInterval(pollServer, 25000);
+  setInterval(pollServer, 10000);
   if (typeof window !== "undefined") {
     window.addEventListener("focus", () => pollServer());
   }
@@ -1614,6 +1715,9 @@ function notifyCollectionSubscribers(colName: string, items?: any[], fromBroadca
     hub.callbacks.forEach(cb => {
       try { cb(dataToBroadcast); } catch (_) {}
     });
+    try {
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName } }));
+    } catch (_) {}
   }
 
   // Broadcast to other tabs/windows in real time (0ms)
@@ -1636,9 +1740,9 @@ export function isDocBelongingToUser(data: any, currentUid?: string, currentEmai
   if (!data) return false;
 
   const eff = getEffectiveUidAndEmail();
-  const targetEmail = (currentEmail || eff.email || "").toLowerCase().trim();
+  const targetEmail = safeDecode(currentEmail || eff.email);
   const targetUid = (currentUid || eff.uid || "").trim();
-  const targetSchoolCode = getSchoolCode().trim();
+  const targetSchoolCode = safeDecode(getSchoolCode());
 
   const isGuest = Boolean(
     eff.isGuest ||
@@ -1648,9 +1752,9 @@ export function isDocBelongingToUser(data: any, currentUid?: string, currentEmai
     targetEmail.endsWith("@school.com")
   );
 
-  const docEmail = (data.userEmail || data.email || data.schoolEmail || data.ownerEmail || "").toLowerCase().trim();
+  const docEmail = safeDecode(data.userEmail || data.email || data.schoolEmail || data.ownerEmail);
   const docUid = (data.userId || data.uid || data.ownerId || data.owner || "").trim();
-  const docSchoolCode = (data.schoolCode || data.school_code || "").trim();
+  const docSchoolCode = safeDecode(data.schoolCode || data.school_code);
 
   // If the user is unauthenticated or in guest view mode:
   // They should view the registered school's data!
@@ -3110,7 +3214,25 @@ export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "ti
 // Delete Behavior Record (Instant local purge + real-time Firestore delete)
 export async function deleteBehaviorRecord(id: string): Promise<void> {
   const eff = getEffectiveUidAndEmail();
+  recordDeletedId(BEHAVIORS_COLL, id);
   removeLocalItemsBy(BEHAVIORS_COLL, (r) => r.id === id || r._docId === id || r._origId === id, eff.uid);
+  postToServerSync("/api/sync/behaviors", { deletedIds: [id] });
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "behavior_deleted",
+        deletedIds: [id],
+        schoolCode: getSchoolCode(),
+        ownerEmail: eff.email,
+        ownerUid: eff.uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+  try {
+    window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+    window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: BEHAVIORS_COLL, type: "behavior_deleted" } }));
+  } catch (_) {}
   await safeFirestoreWrite(deleteDoc(doc(db, BEHAVIORS_COLL, id)), 5000);
 }
 

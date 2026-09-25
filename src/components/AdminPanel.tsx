@@ -2063,6 +2063,12 @@ export default function AdminPanel({
             behaviorsReceivedRef.current,
             selectedAttendanceDate
           );
+          if (searchGradeId && searchClassId && searchDate) {
+            loadSpecificAbsenceSearch(searchGradeId, searchClassId, searchDate);
+          }
+          if (reportStudentId) {
+            loadStudentReport(reportStudentId);
+          }
           setStatsLoading(false);
         }, 60);
       };
@@ -2117,7 +2123,11 @@ export default function AdminPanel({
       const handleForceRefresh = () => {
         loadStatistics();
       };
+      const handleDataSynced = () => {
+        runCompute();
+      };
       window.addEventListener("school_refresh_stats", handleForceRefresh);
+      window.addEventListener("school_data_synced", handleDataSynced);
 
       return () => {
         if (computeDebounceTimerRef.current) clearTimeout(computeDebounceTimerRef.current);
@@ -2125,6 +2135,7 @@ export default function AdminPanel({
         unsubBehaviors();
         unsubDelays();
         window.removeEventListener("school_refresh_stats", handleForceRefresh);
+        window.removeEventListener("school_data_synced", handleDataSynced);
       };
     }
   }, [isAuthenticated, isReadOnly, isGoogleAuthenticated, schoolName]);

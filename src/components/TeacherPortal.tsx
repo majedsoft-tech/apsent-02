@@ -302,11 +302,17 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
     loadStudents();
 
+    const handleSync = () => {
+      loadStudents();
+    };
+    window.addEventListener("school_data_synced", handleSync);
+
     return () => {
       active = false;
       if (unsubscribe) unsubscribe();
+      window.removeEventListener("school_data_synced", handleSync);
     };
-  }, [selectedGradeId, selectedClassId, selectedPeriod]);
+  }, [selectedGradeId, selectedClassId, selectedPeriod, propStudents]);
 
   // Fetch behavior records when selected student changes (Real-time live-sync!)
   useEffect(() => {

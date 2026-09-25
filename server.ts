@@ -78,6 +78,27 @@ function broadcastSyncEvent(type: string, data: any) {
   });
 }
 
+// Keep-alive heartbeat every 15s to keep SSE connection open through proxies (Vite, Cloud Run, Cloudflare, etc.)
+setInterval(() => {
+  const pingPayload = `data: ${JSON.stringify({ type: "ping", timestamp: Date.now() })}\n\n`;
+  sseClients.forEach((client, id) => {
+    try {
+      client.res.write(pingPayload);
+    } catch (_) {
+      sseClients.delete(id);
+    }
+  });
+}, 15000);
+
+function safeDecode(val?: string): string {
+  if (!val) return "";
+  try {
+    return decodeURIComponent(val).toLowerCase().trim();
+  } catch (_) {
+    return (val || "").toLowerCase().trim();
+  }
+}
+
 // Helper to check if an entity belongs to the requested school
 function matchesSchool(item: any, schoolCode?: string, email?: string, uid?: string): boolean {
   if (!item) return false;
@@ -85,15 +106,15 @@ function matchesSchool(item: any, schoolCode?: string, email?: string, uid?: str
   const isGuestEmail = !email || email.toLowerCase().includes("@school.local") || email.toLowerCase().includes("@school.com");
   const isGuestUid = !uid || uid.toLowerCase().startsWith("guest");
   
-  const cleanSchoolCode = (schoolCode || "").toLowerCase().trim();
-  const cleanEmail = isGuestEmail ? "" : (email || "").toLowerCase().trim();
+  const cleanSchoolCode = safeDecode(schoolCode);
+  const cleanEmail = isGuestEmail ? "" : safeDecode(email);
   const cleanUid = isGuestUid ? "" : (uid || "").trim();
 
   // If no specific schoolCode, authenticated email, or authenticated uid, allow viewing the registered school data
   if (!cleanSchoolCode && !cleanEmail && !cleanUid) return true;
 
-  const sCode = (item.schoolCode || "").toLowerCase().trim();
-  const sEmail = (item.userEmail || item.email || "").toLowerCase().trim();
+  const sCode = safeDecode(item.schoolCode);
+  const sEmail = safeDecode(item.userEmail || item.email);
   const sUid = (item.userId || item.uid || "").trim();
 
   // If item has no specific school or user metadata, allow viewing it within the school
