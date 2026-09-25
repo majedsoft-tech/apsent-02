@@ -879,7 +879,12 @@ export default function AdminPanel({
       `هل أنت متأكد من حذف تسجيل تأخر الطالب (${studentName})؟`,
       async () => {
         try {
-          setMorningDelaysList(prev => prev.filter(d => d.id !== delayId && !(studentId && date && d.studentId === studentId && d.date === date)));
+          const matchFn = (d: any) => d && (d.id === delayId || (studentId && date && d.studentId === studentId && d.date === date));
+          setMorningDelaysList(prev => prev.filter(d => !matchFn(d)));
+          if (Array.isArray(cachedDelaysRef.current)) {
+            cachedDelaysRef.current = cachedDelaysRef.current.filter(d => !matchFn(d));
+          }
+          runCompute();
           await deleteMorningDelayRecord(delayId, { studentId, date });
           showMessage("تم حذف تسجيل التأخر بنجاح");
         } catch (e) {
@@ -1040,7 +1045,7 @@ export default function AdminPanel({
 
           // 2. Perform local-first database update and non-blocking background sync for each record ID
           for (const rId of allRecordIds) {
-            if (rId.startsWith("delay_") || rId.startsWith("delay-")) {
+            if (isMorningDelay || rId.startsWith("delay_") || rId.startsWith("delay-") || rId.includes("-morning-delay")) {
               let targetDate = entryDate;
               if (!targetDate && rId.startsWith("delay_")) {
                 const parts = rId.split("_");
@@ -1048,13 +1053,15 @@ export default function AdminPanel({
                 if (dateIdx !== -1) targetDate = parts[dateIdx];
               }
               if (!targetDate) targetDate = getTodayDateString();
-              await deleteMorningDelayRecord(rId, { studentId, date: targetDate });
+              const cleanId = rId.replace("-morning-delay", "");
+              await deleteMorningDelayRecord(cleanId, { studentId, date: targetDate });
             } else if (isNoAbsenceDummy) {
               await deleteAttendanceRecord(rId);
             } else {
               await deleteAttendanceEntry(rId, studentId, isAbsentType);
             }
           }
+          runCompute();
         } catch (e) {
           console.error("Error deleting absence/delay:", e);
           showMessage("حدث خطأ أثناء الحذف", "error");
@@ -2159,6 +2166,49 @@ export default function AdminPanel({
       const handleDataSynced = () => {
         runCompute();
       };
+      const handleDelaysUpdated = (e: any) => {
+        const detail = e?.detail;
+        if (!detail) return;
+        if (detail.type === "delay_deleted") {
+          const delId = detail.deletedId;
+          const delIds = Array.isArray(detail.deletedIds) ? detail.deletedIds : [delId].filter(Boolean);
+          const sId = detail.studentId;
+          const dDate = detail.date;
+          const matchDeleted = (d: any) => d && (
+            (delIds.length > 0 && delIds.includes(d.id)) ||
+            (sId && dDate && d.studentId === sId && d.date === dDate)
+          );
+          if (Array.isArray(cachedDelaysRef.current)) {
+            cachedDelaysRef.current = cachedDelaysRef.current.filter(d => !matchDeleted(d));
+          }
+          setMorningDelaysList(prev => prev.filter(d => !matchDeleted(d)));
+        } else if ((detail.type === "delay_recorded" || detail.type === "delays_batch_recorded") && (detail.record || detail.records)) {
+          const incoming = detail.records ? detail.records : [detail.record];
+          if (Array.isArray(cachedDelaysRef.current)) {
+            let updatedCached = [...cachedDelaysRef.current];
+            incoming.forEach((rec: any) => {
+              if (rec && rec.id) {
+                updatedCached = updatedCached.filter(d => d.id !== rec.id && d.studentId !== rec.studentId);
+                updatedCached.unshift(rec);
+              }
+            });
+            cachedDelaysRef.current = updatedCached;
+          }
+          setMorningDelaysList(prev => {
+            let updatedList = [...prev];
+            incoming.forEach((rec: any) => {
+              if (rec && rec.id) {
+                updatedList = updatedList.filter(d => d.id !== rec.id && d.studentId !== rec.studentId);
+                updatedList.unshift(rec);
+              }
+            });
+            return updatedList;
+          });
+        }
+        runCompute();
+      };
+
+      window.addEventListener("school_refresh_delays", handleDelaysUpdated);
       window.addEventListener("school_refresh_stats", handleForceRefresh);
       window.addEventListener("school_data_synced", handleDataSynced);
 
@@ -2167,6 +2217,7 @@ export default function AdminPanel({
         unsubAttendance();
         unsubBehaviors();
         unsubDelays();
+        window.removeEventListener("school_refresh_delays", handleDelaysUpdated);
         window.removeEventListener("school_refresh_stats", handleForceRefresh);
         window.removeEventListener("school_data_synced", handleDataSynced);
       };

@@ -5,7 +5,9 @@ import {
   getMorningDelayRecords,
   saveMorningDelayRecord,
   deleteMorningDelayRecord,
-  subscribeToMorningDelayRecords
+  subscribeToMorningDelayRecords,
+  isMorningDelayDeleted,
+  isIdDeleted
 } from "../dbService";
 import { 
   Clock, 
@@ -120,29 +122,62 @@ export default function MorningDelayPortal({
     }
   }, [recorderName]);
 
-  // Real-time Firestore Subscription for Morning Delay Records
+  // Real-time Firestore Subscription & Instant Event Listeners for Morning Delay Records
   useEffect(() => {
     setLoading(true);
     const unsub = subscribeToMorningDelayRecords(selectedDate, (newRecords) => {
       setRecords(prev => {
         const safeNew = Array.isArray(newRecords) ? newRecords : [];
-        const serverIds = new Set(safeNew.map(r => r.studentId));
-        // Preserve optimistic records that are in-flight (< 20s old) and not yet returned from server
+        const validNew = safeNew.filter(r => r && !isMorningDelayDeleted(r.date, r.studentId) && !isIdDeleted("morning_delays", r.id));
+        const serverIds = new Set(validNew.map(r => r.studentId));
+        // Preserve optimistic records that are in-flight (< 10s old) and not tombstoned
         const freshOptimistic = prev.filter(r => {
           if (!r || !r.studentId) return false;
           if (serverIds.has(r.studentId)) return false;
+          if (isMorningDelayDeleted(r.date, r.studentId) || isIdDeleted("morning_delays", r.id)) return false;
           const age = Date.now() - (r.timestamp || 0);
-          return age < 20000;
+          return age < 10000;
         });
-        return [...freshOptimistic, ...safeNew];
+        return [...freshOptimistic, ...validNew];
       });
       setLoading(false);
     }, (_err) => {
       setLoading(false);
     });
 
+    // Real-time cross-tab and cross-component broadcast listener (0ms instant update)
+    const handleDelayEvent = (e: any) => {
+      const detail = e?.detail;
+      if (!detail) return;
+      if (detail.type === "delay_deleted") {
+        setRecords(prev => prev.filter(r => {
+          if (detail.deletedId && (r.id === detail.deletedId || (r as any)._docId === detail.deletedId)) return false;
+          if (Array.isArray(detail.deletedIds) && detail.deletedIds.includes(r.id)) return false;
+          if (detail.studentId && detail.date && r.studentId === detail.studentId && r.date === detail.date) return false;
+          return true;
+        }));
+      } else if ((detail.type === "delay_recorded" || detail.type === "delays_batch_recorded") && (detail.record || detail.records)) {
+        const incoming = detail.records ? detail.records : [detail.record];
+        setRecords(prev => {
+          let updated = [...prev];
+          incoming.forEach((rec: any) => {
+            if (rec && rec.date === selectedDate) {
+              updated = updated.filter(r => r.studentId !== rec.studentId && r.id !== rec.id);
+              updated.unshift(rec);
+            }
+          });
+          return updated;
+        });
+      }
+    };
+
+    window.addEventListener("school_refresh_delays", handleDelayEvent);
+    window.addEventListener("school_data_synced", handleDelayEvent);
+
     return () => {
       if (unsub) unsub();
+      window.removeEventListener("school_refresh_delays", handleDelayEvent);
+      window.removeEventListener("school_data_synced", handleDelayEvent);
     };
   }, [selectedDate]);
 

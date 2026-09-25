@@ -903,7 +903,8 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
       const isMyGuest = !myEmail || myEmail.includes("@school.local") || myEmail.includes("@school.com") || myUid.startsWith("guest");
       const isMsgGuest = !msgEmail || msgEmail.includes("@school.local") || msgEmail.includes("@school.com") || msgUid.startsWith("guest");
 
-      const isMatch = (mySchoolCode && msgSchoolCode && mySchoolCode === msgSchoolCode) ||
+      const isMatch = !mySchoolCode || !msgSchoolCode ||
+                      (mySchoolCode && msgSchoolCode && mySchoolCode === msgSchoolCode) ||
                       (mySchoolCode && msgEmail && mySchoolCode === msgEmail) ||
                       (myEmail && msgSchoolCode && myEmail === msgSchoolCode) ||
                       (mySchoolCode && msgUid && mySchoolCode === msgUid) ||
@@ -912,7 +913,8 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
                       (myUid && msgUid && myUid === msgUid) ||
                       (myEmail && msgUid && userProfileAliasCache.get(myEmail)?.uid === msgUid) ||
                       (myUid && msgEmail && userProfileAliasCache.get(myUid.toLowerCase())?.email === msgEmail) ||
-                      isMyGuest || isMsgGuest;
+                      isMyGuest || isMsgGuest ||
+                      !myEmail || !msgEmail;
 
       if (!isMatch) return;
 
@@ -959,6 +961,21 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
         return;
       }
 
+      if (data.type === "delay_recorded" && data.record) {
+        unmarkDeletedId(MORNING_DELAYS_COLL, data.record.id);
+        if (data.record.date && data.record.studentId) {
+          unrecordDeletedMorningDelay(data.record.date, data.record.studentId);
+        }
+        saveOrUpdateLocalItem(MORNING_DELAYS_COLL, data.record);
+        notifyCollectionSubscribers(MORNING_DELAYS_COLL, undefined, true);
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { record: data.record, type: "delay_recorded" } }));
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "delay_recorded" } }));
+        } catch (_) {}
+        return;
+      }
+
       if (data.type === "delay_deleted") {
         if (Array.isArray(data.deletedIds)) {
           data.deletedIds.forEach((delId: string) => {
@@ -970,7 +987,17 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
           recordDeletedMorningDelay(data.date, data.studentId);
           removeLocalItemsBy(MORNING_DELAYS_COLL, d => d.studentId === data.studentId && d.date === data.date);
         }
+        notifyCollectionSubscribers(MORNING_DELAYS_COLL, undefined, true);
         try {
+          window.dispatchEvent(new CustomEvent("school_refresh_delays", { 
+            detail: { 
+              type: "delay_deleted",
+              deletedId: data.deletedIds?.[0],
+              deletedIds: data.deletedIds,
+              studentId: data.studentId,
+              date: data.date
+            } 
+          }));
           window.dispatchEvent(new CustomEvent("school_refresh_stats"));
           window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: data.type } }));
         } catch (_) {}
@@ -3332,6 +3359,30 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
   // 1. Instant local cache update (0ms synchronous)
   saveOrUpdateLocalItem(MORNING_DELAYS_COLL, fullRecord, uid);
 
+  // Broadcast to other tabs/windows in real time (0ms)
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "delay_recorded",
+        colName: MORNING_DELAYS_COLL,
+        record: fullRecord,
+        schoolCode: getSchoolCode(),
+        ownerEmail: email,
+        ownerUid: uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  // Dispatch local window events so all components update with 0ms latency
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { record: fullRecord, type: "delay_recorded" } }));
+      window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "delay_recorded" } }));
+    } catch (_) {}
+  }
+
   // 2. Real-time server sync (background)
   postToServerSync("/api/sync/delays", { record: fullRecord });
 
@@ -3407,6 +3458,30 @@ export async function saveMorningDelaysBatch(records: Omit<MorningDelayRecord, "
   // Real-time server sync
   postToServerSync("/api/sync/delays", { records: fullRecords });
 
+  // Broadcast to other tabs/windows in real time (0ms)
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "delays_batch_recorded",
+        colName: MORNING_DELAYS_COLL,
+        records: fullRecords,
+        schoolCode,
+        ownerEmail: email,
+        ownerUid: uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  // Dispatch local window events so all components update with 0ms latency
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { records: fullRecords, type: "delays_batch_recorded" } }));
+      window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "delays_batch_recorded" } }));
+    } catch (_) {}
+  }
+
   const batch = writeBatch(db);
   for (const record of records) {
     const recordId = `delay_${record.date}_${record.studentId}`;
@@ -3472,11 +3547,12 @@ export async function deleteMorningDelayRecord(
   }, uid);
 
   // 3. Broadcast real-time deletion across open tabs/windows (0ms)
+  const delIds = [id, targetDate && targetStudentId ? `delay_${targetDate}_${targetStudentId}` : ""].filter(Boolean);
   if (realTimeSyncChannel) {
     try {
       realTimeSyncChannel.postMessage({
         type: "delay_deleted",
-        deletedIds: [id, targetDate && targetStudentId ? `delay_${targetDate}_${targetStudentId}` : ""].filter(Boolean),
+        deletedIds: delIds,
         studentId: targetStudentId,
         date: targetDate,
         schoolCode: getSchoolCode(),
@@ -3484,6 +3560,23 @@ export async function deleteMorningDelayRecord(
         ownerUid: eff.uid,
         timestamp: Date.now()
       });
+    } catch (_) {}
+  }
+
+  // Dispatch local window events so all components in current window update with 0ms latency
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_delays", { 
+        detail: { 
+          type: "delay_deleted",
+          deletedId: id,
+          deletedIds: delIds,
+          studentId: targetStudentId,
+          date: targetDate
+        } 
+      }));
+      window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "delay_deleted" } }));
     } catch (_) {}
   }
 
