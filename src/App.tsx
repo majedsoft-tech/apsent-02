@@ -1969,7 +1969,7 @@ export default function App() {
   const hasTeachers = teachers.length > 0;
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row w-full max-w-full overflow-x-hidden bg-gradient-to-br from-slate-100 via-blue-50/10 to-slate-200/40 font-sans text-slate-800" dir="rtl">
+    <div className="min-h-screen flex flex-col md:flex-row w-full max-w-full overflow-x-clip bg-gradient-to-br from-slate-100 via-blue-50/10 to-slate-200/40 font-sans text-slate-800" dir="rtl">
       
       {/* 1. PERMANENT FIXED RIGHT SIDEBAR FOR DESKTOP & TABLETS (≥768px) */}
       {showSidebar && (
@@ -1981,48 +1981,51 @@ export default function App() {
       {/* 2. MAIN APP SECTION */}
       <div className={`flex-1 min-h-screen flex flex-col w-full max-w-full min-w-0 bg-gradient-to-b from-blue-50/40 via-slate-50 to-slate-100/60 ${showSidebar ? "md:mr-72" : ""}`}>
         
-        {/* Top Header for Mobile (< 768px) - Exact match to user's native mobile app screenshot */}
-        {showMobileHeader && (
-          <MobileTopHeader
-            schoolName={schoolName}
-            userDisplayName={currentUser?.displayName}
-            userEmail={currentUser?.email}
-            isGoogleAuthenticated={!!currentUser && !currentUser.isGuest}
-            onCopyTeacherLink={handleCopyTeacherLink}
-            teacherCopied={teacherCopied}
-            showTeacherLink={appMode === "teacher"}
-            onOpenShareModal={() => setIsShareModalOpen(true)}
-            onRefreshData={onTriggerRefresh}
-            isRefreshing={isRefreshingData}
-            onTogglePreviewOrMenu={() => setIsMobileDrawerOpen(true)}
-            onGoogleLogin={handleGoogleLogin}
-          />
-        )}
-
-        {/* Top Header for Desktop (≥ 768px) */}
+        {/* Measured Header Container */}
         {showHeader && (
-          <DesktopHeader
-            schoolName={schoolName}
-            onEditSchoolName={() => {
-              setSchoolModalInput(schoolName || "");
-              setIsSchoolModalOpen(true);
-            }}
-            isSavingSchoolName={isSavingSchoolName}
-            onRefreshData={onTriggerRefresh}
-            isRefreshing={isRefreshingData}
-            onOpenShareModal={() => setIsShareModalOpen(true)}
-            todayAbsentCount={todayCounts.absentCount}
-            todayBehaviorCount={todayCounts.behaviorCount}
-            currentTime={currentTime}
-            currentUser={currentUser}
-            onGoogleLogin={handleGoogleLogin}
-            isStatsOnly={appMode === "stats-only"}
-            onSyncCloudData={handleSyncCloudData}
-            isSyncingCloud={isSyncingCloud}
-            syncCloudSuccess={syncCloudSuccess}
-            onDownloadBackup={downloadSchoolBackupFile}
-            onUploadBackup={handleUploadBackup}
-          />
+          <div ref={headerRef as any} id="app-sticky-header-wrapper" className="sticky top-0 z-30 w-full">
+            {/* Top Header for Mobile (< 768px) */}
+            {showMobileHeader && (
+              <MobileTopHeader
+                schoolName={schoolName}
+                userDisplayName={currentUser?.displayName}
+                userEmail={currentUser?.email}
+                isGoogleAuthenticated={!!currentUser && !currentUser.isGuest}
+                onCopyTeacherLink={handleCopyTeacherLink}
+                teacherCopied={teacherCopied}
+                showTeacherLink={appMode === "teacher"}
+                onOpenShareModal={() => setIsShareModalOpen(true)}
+                onRefreshData={onTriggerRefresh}
+                isRefreshing={isRefreshingData}
+                onTogglePreviewOrMenu={() => setIsMobileDrawerOpen(true)}
+                onGoogleLogin={handleGoogleLogin}
+              />
+            )}
+
+            {/* Top Header for Desktop (≥ 768px) */}
+            <DesktopHeader
+              schoolName={schoolName}
+              onEditSchoolName={() => {
+                setSchoolModalInput(schoolName || "");
+                setIsSchoolModalOpen(true);
+              }}
+              isSavingSchoolName={isSavingSchoolName}
+              onRefreshData={onTriggerRefresh}
+              isRefreshing={isRefreshingData}
+              onOpenShareModal={() => setIsShareModalOpen(true)}
+              todayAbsentCount={todayCounts.absentCount}
+              todayBehaviorCount={todayCounts.behaviorCount}
+              currentTime={currentTime}
+              currentUser={currentUser}
+              onGoogleLogin={handleGoogleLogin}
+              isStatsOnly={appMode === "stats-only"}
+              onSyncCloudData={handleSyncCloudData}
+              isSyncingCloud={isSyncingCloud}
+              syncCloudSuccess={syncCloudSuccess}
+              onDownloadBackup={downloadSchoolBackupFile}
+              onUploadBackup={handleUploadBackup}
+            />
+          </div>
         )}
 
         {/* Dynamic Inner Portal Content */}

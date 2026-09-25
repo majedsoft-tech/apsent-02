@@ -85,6 +85,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
   // Refs and dynamic offsets for sticky elements to ensure precise and solid pinning
   const firstStickyRef = React.useRef<HTMLDivElement>(null);
+  const [firstStickyHeight, setFirstStickyHeight] = useState<number>(115);
 
   // Filtered lists
   const [filteredClasses, setFilteredClasses] = useState<Class[]>([]);
@@ -113,6 +114,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
   }, [isDirty]);
   const [hasRecord, setHasRecord] = useState<boolean>(false);
   const [showSaveAttendanceModal, setShowSaveAttendanceModal] = useState<boolean>(false);
+  const [saveStep, setSaveStep] = useState<number>(1);
 
   // Behavior states
   const [selectedStudentId, setSelectedStudentId] = useState<string>("");
@@ -160,7 +162,10 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
     const updateTopOffset = () => {
       if (firstStickyRef.current) {
         const height = firstStickyRef.current.offsetHeight;
-        document.documentElement.style.setProperty('--first-sticky-height', `${height}px`);
+        if (height > 0) {
+          setFirstStickyHeight(height);
+          document.documentElement.style.setProperty('--first-sticky-height', `${height}px`);
+        }
       }
     };
 
@@ -415,6 +420,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
     setAttendanceLoading(true);
     setSaveStatus(null);
+    setSaveStep(1);
     setShowSaveAttendanceModal(true);
 
     try {
@@ -434,6 +440,10 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
       const matchedTeacher = teachers.find(t => t.id === selectedTeacherId);
       const currentTeacherName = matchedTeacher?.name || (selectedTeacherId && !selectedTeacherId.startsWith("tea_") && !selectedTeacherId.startsWith("temp_") ? selectedTeacherId : "") || "معلم الحصة";
 
+      // Stage 1 delay for visual perception
+      await new Promise(r => setTimeout(r, 320));
+      setSaveStep(2);
+
       await saveAttendanceRecord({
         date: getTodayDateString(),
         period: selectedPeriod,
@@ -448,17 +458,25 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
         isNoAbsence: currentAbsent.length === 0 && currentLate.length === 0
       });
 
+      // Stage 3: Syncing live stats
+      setSaveStep(3);
+      if (onRefreshStats) onRefreshStats();
+      await new Promise(r => setTimeout(r, 300));
+
       setSaveStatus({ type: "success", message: "تم حفظ وتوثيق الغياب بنجاح! 💾" });
       setSavedAbsentIds(currentAbsent);
       setHasRecord(true);
       setIsDirty(false);
       isDirtyRef.current = false;
-      if (onRefreshStats) onRefreshStats();
       
-      // Auto close save popup smoothly after displaying success
+      // Stage 4: Completed
+      setSaveStep(4);
+
+      // Auto close and disappear smoothly without any manual action or old screen
       setTimeout(() => {
         setShowSaveAttendanceModal(false);
-      }, 1500);
+        setAttendanceLoading(false);
+      }, 750);
 
       // Auto clear inline message after 3s
       setTimeout(() => setSaveStatus(null), 3000);
@@ -467,9 +485,8 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
       setSaveStatus({ type: "error", message: "حدث خطأ أثناء الحفظ، يرجى المحاولة لاحقاً" });
       setTimeout(() => {
         setShowSaveAttendanceModal(false);
+        setAttendanceLoading(false);
       }, 2000);
-    } finally {
-      setAttendanceLoading(false);
     }
   };
 
@@ -684,19 +701,14 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
         </div>
       </div>
 
-      {/* STICKY GRADE & CLASS SELECTION PANEL (الصف والفصل مثبت في الأعلى عند السكروول) */}
+      {/* GRADE & CLASS SELECTION PANEL */}
       <div 
-        ref={firstStickyRef}
-        style={{ top: "var(--header-height, 0px)" }}
-        className="sticky top-0 z-30 bg-slate-50/95 backdrop-blur-md p-4 rounded-2xl text-right border-2 border-indigo-500/80 shadow-md space-y-3 transition-all"
+        className="bg-slate-50/95 p-3 sm:p-4 rounded-2xl text-right border-2 border-indigo-500/80 shadow-md space-y-2.5 sm:space-y-3 transition-all"
       >
         {/* Grade Select Row */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <label className="block text-xs font-black text-slate-700">الصف والفصل</label>
-            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100/70 px-2 py-0.5 rounded-full border border-indigo-200/80">
-              📌 مثبت أثناء التمرير
-            </span>
           </div>
           <div className="flex items-center gap-2 overflow-x-auto pb-1 flex-wrap">
             {grades.map((g, idx) => {
@@ -762,26 +774,29 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
       {/* QUICK STATS & SELECTION SUMMARY CARD (مثبت أثناء التمرير) */}
       <div 
-        style={{ top: "calc(var(--header-height, 0px) + var(--first-sticky-height, 120px) + 8px)" }}
-        className="sticky z-20 flex flex-col mb-1 transition-all"
+        id="teacher-portal-quick-stats-sticky"
+        style={{ 
+          top: "var(--header-height, 0px)" 
+        }}
+        className="sticky top-0 z-20 flex flex-col mb-1 transition-all"
       >
         <div className={`bg-white/95 backdrop-blur-md rounded-2xl shadow-md border border-slate-200/90 p-3 sm:p-3.5 flex flex-col gap-2 sm:gap-2.5 transition-all duration-300 ${
           activeTab === "attendance" ? "border-t-4 border-t-blue-600" : "border-t-4 border-t-amber-500"
         }`}>
           {/* Quick stats (Attendance & Absence side by side) */}
           <div className="flex items-center gap-2 w-full">
-            <div className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-50 text-emerald-800 py-2 px-2.5 rounded-xl border border-emerald-100">
+            <div className="flex-1 flex items-center justify-center gap-1.5 bg-emerald-50 text-emerald-800 py-2 px-2.5 rounded-xl border border-emerald-100 shadow-3xs">
               <span className="text-[11px] font-black text-emerald-600">الحضور:</span>
               <span className="text-sm font-black text-emerald-700">{totalStudents > 0 ? presentCount : 0}</span>
             </div>
-            <div className="flex-1 flex items-center justify-center gap-1.5 bg-rose-50 text-rose-800 py-2 px-2.5 rounded-xl border border-rose-100">
+            <div className="flex-1 flex items-center justify-center gap-1.5 bg-rose-50 text-rose-800 py-2 px-2.5 rounded-xl border border-rose-100 shadow-3xs">
               <span className="text-[11px] font-black text-rose-600">الغياب:</span>
               <span className="text-sm font-black text-rose-700">{totalStudents > 0 ? absentCount : 0}</span>
             </div>
           </div>
 
           {/* Selected Criteria Info Badge */}
-          <div className="bg-slate-50 text-slate-600 border border-slate-150 py-1.5 px-2.5 rounded-xl text-[10px] font-black flex items-center justify-center gap-2 w-full">
+          <div className="bg-slate-50 text-slate-600 border border-slate-150 py-1.5 px-2.5 rounded-xl text-[10px] font-black flex items-center justify-center gap-2 w-full shadow-3xs">
             <div>
               <span>صف: </span>
               <span className="text-slate-900 font-black">{currentGrade || "---"}</span>
@@ -991,52 +1006,31 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
         </motion.button>
       </div>
 
-      {/* POPUP MODAL: DIRECT INSTANT SAVING STATUS POPUP (نافذة منبثقة فورية لحفظ الغياب مباشرة) */}
+      {/* POPUP MODAL: HOURGLASS SAVING STAGES (نافذة منبثقة على شكل ساعة رملية لمراحل الحفظ) */}
       {showSaveAttendanceModal && (
         <div 
-          onClick={() => {
-            if (!attendanceLoading) setShowSaveAttendanceModal(false);
-          }}
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[120] flex items-center justify-center p-4 cursor-pointer"
+          className="fixed inset-0 bg-slate-950/75 backdrop-blur-md z-[120] flex items-center justify-center p-4 select-none"
+          dir="rtl"
         >
           <motion.div 
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.9, opacity: 0 }}
-            onClick={(e) => e.stopPropagation()}
-            className="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-sm overflow-hidden flex flex-col items-center text-center p-6 space-y-4 relative cursor-default" 
-            dir="rtl"
+            initial={{ scale: 0.85, opacity: 0, y: 15 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0, y: 10 }}
+            transition={{ type: "spring", stiffness: 350, damping: 25 }}
+            className="bg-slate-900 border border-amber-500/30 shadow-2xl rounded-3xl p-6 sm:p-7 max-w-xs sm:max-w-sm w-full text-center space-y-4 relative overflow-hidden text-white" 
           >
-            <button
-              type="button"
-              onClick={() => {
-                setShowSaveAttendanceModal(false);
-                setAttendanceLoading(false);
-              }}
-              className="absolute top-4 left-4 w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center text-xs font-black transition cursor-pointer z-10"
-              title="إغلاق"
-            >
-              ✕
-            </button>
+            {/* Ambient Warm Hourglass Glow */}
+            <div className="absolute top-0 right-1/2 translate-x-1/2 w-40 h-40 bg-amber-500/15 rounded-full blur-3xl pointer-events-none"></div>
 
-            {attendanceLoading ? (
-              <div className="flex flex-col items-center justify-center py-4 space-y-3">
-                <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center relative shadow-inner">
-                  <Loader2 className="w-8 h-8 animate-spin" />
-                </div>
-                <div className="space-y-1">
-                  <h3 className="text-base font-black text-slate-800">جاري حفظ وتوثيق الغياب...</h3>
-                  <p className="text-xs text-slate-500 font-medium">يتم رصد السجلات ومزامنة الحصص لحظياً</p>
-                </div>
-              </div>
-            ) : saveStatus?.type === "error" ? (
-              <div className="flex flex-col items-center justify-center py-3 space-y-3 w-full">
-                <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shadow-inner">
+            {/* Error Fallback */}
+            {saveStatus?.type === "error" ? (
+              <div className="space-y-4 py-2">
+                <div className="w-16 h-16 rounded-2xl bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto shadow-inner">
                   <X className="w-8 h-8" />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-base font-black text-rose-800">تعذر الحفظ</h3>
-                  <p className="text-xs text-rose-600 font-medium">{saveStatus.message}</p>
+                  <h3 className="text-base font-black text-rose-300">تعذر الحفظ</h3>
+                  <p className="text-xs text-rose-200/80 font-medium">{saveStatus.message}</p>
                 </div>
                 <button
                   type="button"
@@ -1047,28 +1041,154 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                 </button>
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-2 space-y-3 w-full">
-                <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-inner">
-                  <CheckCircle className="w-8 h-8" />
+              <div className="space-y-4 relative z-10">
+                {/* Header Badge & Title */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-black tracking-wider uppercase bg-amber-500/15 text-amber-300 border border-amber-500/30 px-3 py-1 rounded-full inline-flex items-center gap-1.5 shadow-3xs">
+                    <span>⏳</span>
+                    <span>{saveStep === 4 ? "اكتمل الحفظ" : "جاري حفظ الغياب"}</span>
+                  </span>
+                  <h3 className="text-base sm:text-lg font-black text-white pt-0.5">
+                    {saveStep === 4 ? "تم توثيق الغياب بنجاح! ✨" : "مراحل حفظ وتوثيق الغياب"}
+                  </h3>
                 </div>
-                <div className="space-y-1">
-                  <h3 className="text-base font-black text-emerald-800">تم حفظ الغياب بنجاح! 💾</h3>
-                  <p className="text-xs text-slate-600 font-bold">
-                    {absentStudentIds.length === 0 
-                      ? "جميع الطلاب حضور 100% ✨" 
-                      : `تم رصد غياب ${absentStudentIds.length} طالب بنجاح 📋`}
+
+                {/* Animated Hourglass Graphic */}
+                <div className="relative py-2 flex items-center justify-center">
+                  <div className="relative">
+                    <svg className="w-20 h-24 mx-auto drop-shadow-[0_4px_16px_rgba(245,158,11,0.25)]" viewBox="0 0 64 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      {/* Top & Bottom Brass Caps */}
+                      <rect x="6" y="2" width="52" height="5" rx="2.5" fill="#D97706" stroke="#F59E0B" strokeWidth="1" />
+                      <rect x="6" y="73" width="52" height="5" rx="2.5" fill="#D97706" stroke="#F59E0B" strokeWidth="1" />
+
+                      {/* Glass Body */}
+                      <path
+                        d="M13 7 C13 26 27 36 29 40 C27 44 13 54 13 73 L51 73 C51 54 37 44 35 40 C37 36 51 26 51 7 Z"
+                        fill="rgba(255, 255, 255, 0.04)"
+                        stroke="rgba(245, 158, 11, 0.5)"
+                        strokeWidth="2"
+                        strokeLinejoin="round"
+                      />
+
+                      {/* Top Sand (Depleting as steps advance) */}
+                      <path
+                        d={
+                          saveStep === 1
+                            ? "M17 12 C17 24 27 34 31 38 C35 34 45 24 45 12 Z"
+                            : saveStep === 2
+                            ? "M20 20 C22 26 27 34 31 38 C35 34 40 26 42 20 Z"
+                            : saveStep === 3
+                            ? "M25 28 C27 32 29 35 31 38 C33 35 35 32 37 28 Z"
+                            : "M30 36 C30.5 37 31 38 31 38 C31 38 31.5 37 32 36 Z"
+                        }
+                        fill="#F59E0B"
+                        className="transition-all duration-300 ease-out"
+                      />
+
+                      {/* Falling Sand Stream in the Neck */}
+                      {saveStep < 4 && (
+                        <>
+                          <line 
+                            x1="31" 
+                            y1="38" 
+                            x2="31" 
+                            y2="66" 
+                            stroke="#FBBF24" 
+                            strokeWidth="2" 
+                            strokeDasharray="4 2" 
+                            className="animate-pulse" 
+                          />
+                          <circle cx="31" cy="48" r="1.5" fill="#FEF08A" className="animate-ping" style={{ animationDuration: "0.8s" }} />
+                          <circle cx="31" cy="58" r="1.2" fill="#FEF08A" className="animate-bounce" style={{ animationDuration: "0.6s" }} />
+                        </>
+                      )}
+
+                      {/* Bottom Sand (Filling up as steps advance) */}
+                      <path
+                        d={
+                          saveStep === 1
+                            ? "M23 72 C27 68 35 68 39 72 Z"
+                            : saveStep === 2
+                            ? "M18 72 C22 62 40 62 44 72 Z"
+                            : saveStep === 3
+                            ? "M15 72 C19 54 43 54 47 72 Z"
+                            : "M15 72 C17 48 45 48 47 72 Z"
+                        }
+                        fill="#F59E0B"
+                        className="transition-all duration-300 ease-out"
+                      />
+
+                      {/* Glass Highlight Reflections */}
+                      <path
+                        d="M17 12 C17 22 23 29 25 33"
+                        stroke="rgba(255, 255, 255, 0.45)"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                      <path
+                        d="M17 68 C17 58 23 51 25 47"
+                        stroke="rgba(255, 255, 255, 0.3)"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+
+                    {/* Step 4: Big glowing checkmark badge over hourglass */}
+                    {saveStep === 4 && (
+                      <div className="absolute inset-0 flex items-center justify-center animate-in zoom-in-75 duration-300">
+                        <div className="w-13 h-13 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/50 border-2 border-white">
+                          <CheckCircle className="w-7 h-7" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden border border-slate-700/80 p-0.5">
+                  <div 
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      saveStep === 4 
+                        ? "bg-gradient-to-r from-emerald-500 to-teal-400" 
+                        : "bg-gradient-to-r from-amber-500 to-amber-300"
+                    }`}
+                    style={{ 
+                      width: saveStep === 1 ? "25%" : saveStep === 2 ? "60%" : saveStep === 3 ? "85%" : "100%" 
+                    }}
+                  />
+                </div>
+
+                {/* Current Stage Description Card */}
+                <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-3.5 space-y-1.5 shadow-inner">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-400">
+                    <span className="text-amber-400 font-black">المرحلة {saveStep} من ٤</span>
+                    <span className="font-mono text-slate-300 font-extrabold">
+                      {saveStep === 1 ? "25%" : saveStep === 2 ? "60%" : saveStep === 3 ? "85%" : "100%"}
+                    </span>
+                  </div>
+                  <p className="text-xs sm:text-sm font-extrabold text-white leading-relaxed min-h-[22px]">
+                    {saveStep === 1 && "📋 تهيئة وتجهيز سجلات الحضور والغياب..."}
+                    {saveStep === 2 && "💾 تشفير وحفظ السجل سحابياً ومحلياً..."}
+                    {saveStep === 3 && "⚡ تحديث ومزامنة الإحصائيات الفورية..."}
+                    {saveStep === 4 && "✨ اكتمل حفظ وتوثيق الغياب بنجاح!"}
                   </p>
                 </div>
-                <div className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-1.5 text-2xs font-extrabold text-slate-600 w-full">
-                  {grades.find(g => g.id === selectedGradeId)?.name} - {classes.find(c => c.id === selectedClassId)?.name} | {selectedPeriod}
+
+                {/* 4 Steps Indicator Dots */}
+                <div className="flex items-center justify-center gap-2 pt-1">
+                  {[1, 2, 3, 4].map((stepNum) => (
+                    <div 
+                      key={stepNum}
+                      className={`h-2 rounded-full transition-all duration-300 ${
+                        saveStep > stepNum
+                          ? "w-6 bg-emerald-500"
+                          : saveStep === stepNum
+                          ? "w-8 bg-amber-400 animate-pulse"
+                          : "w-2 bg-slate-700"
+                      }`}
+                    />
+                  ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowSaveAttendanceModal(false)}
-                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition cursor-pointer"
-                >
-                  تم، إغلاق النافذة ✓
-                </button>
               </div>
             )}
           </motion.div>

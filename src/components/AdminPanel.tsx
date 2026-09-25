@@ -3286,8 +3286,8 @@ export default function AdminPanel({
                               <th className="py-2 px-1 text-center w-6">#</th>
                               <th className="py-2 px-1 text-right font-black w-12">الوقت</th>
                               <th className="py-2 px-1.5 text-right font-black">اسم الطالب</th>
-                              <th className="py-2 px-0.5 text-center font-black w-10">الفصل</th>
                               <th className="py-2 px-0.5 text-center font-black">الحصة</th>
+                              <th className="py-2 px-0.5 text-center font-black w-10">الفصل</th>
                               <th className="py-2 px-1 text-right font-black w-24">المعلم المعتمد</th>
                               {!isReadOnly && <th className="py-2 px-0.5 text-center w-8">⚙️</th>}
                             </tr>
@@ -3363,13 +3363,7 @@ export default function AdminPanel({
                                       )}
                                     </div>
                                   </td>
-                                  {/* Class column before Period column */}
-                                  <td className="py-1 px-0.5 text-center">
-                                    <span className={`font-extrabold text-[9.5px] w-4.5 h-4.5 rounded flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الفصل">
-                                      {getClassNum(entry.classCode)}
-                                    </span>
-                                  </td>
-                                  {/* Period column - visible even when no absence */}
+                                  {/* Period column before Class column */}
                                   <td className="py-1 px-0.5 text-center">
                                     <div className="flex items-center justify-center gap-0.5 flex-wrap">
                                       {periodsToRender && periodsToRender.length > 0 && periodsToRender.some((p: string) => Boolean(p)) ? (
@@ -3386,6 +3380,12 @@ export default function AdminPanel({
                                         <span className="text-slate-400 text-[9.5px]">-</span>
                                       )}
                                     </div>
+                                  </td>
+                                  {/* Class column */}
+                                  <td className="py-1 px-0.5 text-center">
+                                    <span className={`font-extrabold text-[9.5px] w-4.5 h-4.5 rounded flex items-center justify-center border shadow-3xs mx-auto ${getClassBadgeStyles(getClassNum(entry.classCode))}`} title="الفصل">
+                                      {getClassNum(entry.classCode)}
+                                    </span>
                                   </td>
                                   <td className="py-1 px-1 text-slate-600 font-medium text-[9.5px] whitespace-nowrap truncate max-w-[100px]" title={entry.allTeachers ? entry.allTeachers.join("، ") : entry.teacherName}>
                                     {entry.allTeachers && entry.allTeachers.length > 1 
@@ -3486,14 +3486,14 @@ export default function AdminPanel({
 
                               <div className="mt-2 pt-2 border-t border-slate-200/50 flex flex-wrap items-center justify-between gap-1.5 text-[11px]">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className={`font-black text-[10px] px-2 py-0.5 rounded-md border ${getClassBadgeStyles(getClassNum(entry.classCode))}`}>
-                                    فصل {getClassNum(entry.classCode)}
-                                  </span>
                                   {periodsToRender.map((pCode: string, pIdx: number) => (
                                     <span key={pIdx} className={`font-black text-[10px] px-2 py-0.5 rounded-md border ${getPeriodBadgeStyles(getPeriodNum(pCode))}`}>
                                       حصة {getPeriodNum(pCode)}
                                     </span>
                                   ))}
+                                  <span className={`font-black text-[10px] px-2 py-0.5 rounded-md border ${getClassBadgeStyles(getClassNum(entry.classCode))}`}>
+                                    فصل {getClassNum(entry.classCode)}
+                                  </span>
                                 </div>
 
                                 <div className="flex items-center gap-2 text-slate-500 font-bold text-[10px]">

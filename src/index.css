@@ -12,11 +12,15 @@ body {
   font-family: var(--font-sans);
   direction: rtl;
   background-color: #f8fafc;
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100vw;
 }
 
 html {
-  overflow-x: hidden;
+  overflow-x: clip;
   max-width: 100vw;
+}
+
+:root {
+  --header-height: 0px;
 }

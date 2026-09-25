@@ -253,8 +253,6 @@ export default function MorningDelayPortal({
       return [optimisticRecord, ...filtered];
     });
 
-    setSaveToast(`تم تسجيل تأخر (${student.name}) - ${exactRecordTime}`);
-    setTimeout(() => setSaveToast(null), 2500);
     setNotes("");
 
     // Background persistent save
@@ -397,7 +395,10 @@ export default function MorningDelayPortal({
       </div>
 
       {/* 2. INDEPENDENT STICKY GRADE & CLASS SELECTION PANEL (مستقل ومثبت في أعلى الصفحة عند التمرير) */}
-      <div className="sticky top-14 md:top-16 z-30 bg-white/95 backdrop-blur-md p-2.5 sm:p-4 rounded-xl sm:rounded-2xl md:rounded-3xl border sm:border-2 border-indigo-500/80 shadow-md space-y-2 sm:space-y-3 transition-all">
+      <div 
+        style={{ top: "var(--header-height, 0px)" }}
+        className="sticky top-0 z-30 bg-white/95 backdrop-blur-md p-2.5 sm:p-4 rounded-xl sm:rounded-2xl md:rounded-3xl border sm:border-2 border-indigo-500/80 shadow-md space-y-2 sm:space-y-3 transition-all"
+      >
         <div className="flex flex-wrap items-center justify-between gap-1.5">
           <div className="flex items-center gap-1.5 sm:gap-2">
             <label className="text-xs sm:text-sm font-black text-slate-800">الصف والفصل</label>
