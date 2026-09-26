@@ -127,20 +127,17 @@ export default function MobileDrawer({
 
               <button
                 type="button"
-                onClick={onCopyDelayLink}
-                className="w-full flex items-center justify-between p-2.5 bg-amber-50 hover:bg-amber-100/70 border border-amber-200 rounded-xl text-xs font-black text-amber-950 transition cursor-pointer"
+                disabled={true}
+                title="رابط تسجيل التأخر الصباحي معطل حالياً - قريباً"
+                className="w-full flex items-center justify-between p-2.5 bg-amber-50/60 border border-amber-200/80 rounded-xl text-xs font-black text-slate-500 cursor-not-allowed select-none opacity-80"
               >
                 <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-600" />
+                  <Clock className="w-4 h-4 text-amber-600/70" />
                   <span>رابط التأخر الصباحي</span>
                 </div>
-                {delayCopied ? (
-                  <span className="text-emerald-600 flex items-center gap-1 text-[10px]">
-                    <Check className="w-3 h-3" /> تم النسخ
-                  </span>
-                ) : (
-                  <Copy className="w-3.5 h-3.5 text-amber-400" />
-                )}
+                <span className="text-[10px] bg-amber-200 text-amber-900 font-black px-1.5 py-0.5 rounded border border-amber-300">
+                  قريباً
+                </span>
               </button>
           </div>
 
@@ -185,21 +182,20 @@ export default function MobileDrawer({
                 <span>بوابة المعلمين - غياب الحصص</span>
               </button>
 
-              {/* Morning Delay */}
+              {/* Morning Delay (معطل حالياً - قريباً) */}
               <button
                 type="button"
-                onClick={() => {
-                  onNavigate("morning-delay");
-                  onClose();
-                }}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl text-xs font-black transition cursor-pointer ${
-                  appMode === "morning-delay"
-                    ? "bg-amber-600 text-white shadow-md shadow-amber-500/20"
-                    : "bg-slate-50 hover:bg-slate-100 text-slate-800"
-                }`}
+                disabled={true}
+                title="قسم تسجيل التأخر الصباحي معطل حالياً - قريباً"
+                className="w-full flex items-center justify-between p-3 rounded-xl text-xs font-black cursor-not-allowed opacity-60 bg-slate-50 text-slate-400 select-none"
               >
-                <Clock className="w-4 h-4" />
-                <span>بوابة التأخر الصباحي للطابور</span>
+                <div className="flex items-center gap-3">
+                  <Clock className="w-4 h-4 text-slate-400" />
+                  <span>بوابة التأخر الصباحي للطابور</span>
+                </div>
+                <span className="text-[10px] bg-amber-100 text-amber-800 font-black px-2 py-0.5 rounded-md border border-amber-200">
+                  قريباً
+                </span>
               </button>
 
               {/* Grades & Classes */}

@@ -159,15 +159,11 @@ export default function DesktopHeader({
           <span className={`px-2 py-0.5 rounded-lg text-xs ${todayAbsentCount > 0 ? "bg-rose-500 text-white" : "bg-emerald-500 text-white"}`}>
             {todayAbsentCount} طالب
           </span>
-          {todayDelayCount > 0 && (
-            <>
-              <span className="text-slate-300">•</span>
-              <span className="text-slate-500 text-[11px]">تأخر:</span>
-              <span className="px-2 py-0.5 rounded-lg text-xs bg-amber-500 text-white shadow-3xs">
-                {todayDelayCount} طالب
-              </span>
-            </>
-          )}
+          <span className="text-slate-300">•</span>
+          <span className="text-slate-500 text-[11px]">تأخر:</span>
+          <span className="px-2 py-0.5 rounded-lg text-xs bg-amber-500 text-white shadow-3xs">
+            {todayDelayCount > 0 ? `${todayDelayCount} طالب` : "0 متأخر"}
+          </span>
         </div>
 
         {/* Share Modal Trigger (Hidden in stats-only mode) */}

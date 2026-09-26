@@ -468,7 +468,33 @@ export default function MorningDelayPortal({
         </div>
       </div>
 
-      {/* 2. INDEPENDENT STICKY GRADE & CLASS SELECTION PANEL (مستقل ومثبت في أعلى الصفحة عند التمرير) */}
+      {/* ⚠️ Disabled Section Banner (معطل حالياً - قريباً) */}
+      <div className="bg-amber-500/20 border-2 border-amber-400/80 backdrop-blur-md rounded-2xl p-4 sm:p-5 text-center text-amber-100 shadow-xl space-y-2">
+        <div className="flex flex-wrap items-center justify-center gap-2 text-base sm:text-lg font-black text-amber-200">
+          <Clock className="w-5 h-5 text-amber-300" />
+          <span>قسم تسجيل التأخر الصباحي معطل حالياً</span>
+          <span className="bg-amber-400 text-amber-950 text-xs px-2.5 py-0.5 rounded-full font-black shadow-sm">قريباً</span>
+        </div>
+        <p className="text-xs sm:text-sm text-amber-100/90 font-bold max-w-xl mx-auto">
+          يجري العمل على تحديث وتطوير قسم تسجيل التأخر الصباحي وسيكون متاحاً لجميع المشرفين والمدارس قريباً بإذن الله.
+        </p>
+        {navigateTo && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => navigateTo("admin")}
+              className="bg-amber-400 hover:bg-amber-300 text-amber-950 font-black px-4 py-2 rounded-xl text-xs transition cursor-pointer shadow-md inline-flex items-center gap-1.5"
+            >
+              <ArrowRight className="w-4 h-4" />
+              <span>العودة للوحة المتابعة الرئيسية</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Disabled Portal Interactive Body */}
+      <div className="pointer-events-none opacity-50 select-none space-y-4">
+        {/* 2. INDEPENDENT STICKY GRADE & CLASS SELECTION PANEL (مستقل ومثبت في أعلى الصفحة عند التمرير) */}
       <div 
         style={{ top: "var(--header-height, 0px)" }}
         className="sticky top-0 z-30 bg-white/95 backdrop-blur-md p-2.5 sm:p-4 rounded-xl sm:rounded-2xl md:rounded-3xl border sm:border-2 border-indigo-500/80 shadow-md space-y-2 sm:space-y-3 transition-all"
@@ -838,6 +864,7 @@ export default function MorningDelayPortal({
           </div>
         </div>
       )}
+      </div>
 
     </div>
   );

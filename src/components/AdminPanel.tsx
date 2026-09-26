@@ -3069,41 +3069,6 @@ export default function AdminPanel({
   }
 
   // --- MAIN ADMIN SYSTEM DISPLAY (WIDE RESPONSIVE SCREEN) ---
-  if (!isGoogleAuthenticated) {
-    return (
-      <div id="admin-main-panel" className="w-full space-y-6 pb-12">
-        <div className="w-full max-w-lg mx-auto my-12 bg-white rounded-3xl p-6 sm:p-10 border border-slate-200/90 shadow-lg text-center space-y-6 animate-in fade-in">
-          <div className="w-16 h-16 rounded-3xl bg-indigo-50 border border-indigo-100 flex items-center justify-center mx-auto text-3xl shadow-inner">
-            🔒
-          </div>
-          <div className="space-y-2">
-            <h2 className="text-lg sm:text-xl font-black text-slate-900">
-              تسجيل الدخول مطلوب
-            </h2>
-            <p className="text-xs sm:text-sm font-medium text-slate-600 leading-relaxed max-w-sm mx-auto">
-              لحماية خصوصية البيانات وسجلات المدرسة والطلاب، يجب تسجيل الدخول بحساب Google لاستعراض بيانات المدرسة.
-            </p>
-          </div>
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={onRequireGoogleLogin}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-8 py-3.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md shadow-indigo-600/25 transition-all transform hover:scale-[1.02] cursor-pointer"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24">
-                <path
-                  fill="#EA4335"
-                  d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
-                />
-              </svg>
-              <span>تسجيل الدخول بحساب Google</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div id="admin-main-panel" className="w-full space-y-6 pb-12">
       
@@ -3272,11 +3237,9 @@ export default function AdminPanel({
                   <span className="bg-rose-50 text-rose-700 border border-rose-200/80 px-2.5 py-1 rounded-lg font-black shadow-3xs">
                     {todayStats.absentCount} طالب غائب
                   </span>
-                  {todayStats.delayCount > 0 && (
-                    <span className="bg-amber-50 text-amber-800 border border-amber-200/80 px-2.5 py-1 rounded-lg font-black shadow-3xs">
-                      {todayStats.delayCount} طالب متأخر
-                    </span>
-                  )}
+                  <span className="bg-amber-50 text-amber-800 border border-amber-200/80 px-2.5 py-1 rounded-lg font-black shadow-3xs">
+                    {todayStats.delayCount > 0 ? `${todayStats.delayCount} طالب متأخر` : "0 متأخر"}
+                  </span>
                 </div>
               </div>
 

@@ -405,10 +405,6 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
   // Save attendance (Ultra-fast instant save executed directly with animated status popup)
   const handleSaveAttendance = async () => {
-    if (!isGoogleAuthenticated && !isDirectTeacherLink) {
-      onRequireGoogleLogin?.();
-      return;
-    }
     if (!selectedTeacherId || !selectedGradeId || !selectedClassId) {
       setSaveStatus({ type: "error", message: "الرجاء اختيار المعلم والصف والفصل أولاً" });
       return;
@@ -492,10 +488,6 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
   // Save behavior observation
   const handleSaveBehavior = async () => {
-    if (!isGoogleAuthenticated && !isDirectTeacherLink) {
-      onRequireGoogleLogin?.();
-      return;
-    }
     if (!selectedStudentId) {
       setBehaviorSaveStatus({ type: "error", message: "الرجاء تحديد طالب أولاً" });
       return;
@@ -560,10 +552,6 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
   // Save all pending behaviors at once
   const handleSaveAllBehaviors = async () => {
-    if (!isGoogleAuthenticated && !isDirectTeacherLink) {
-      onRequireGoogleLogin?.();
-      return;
-    }
     if (totalPendingBehaviorsCount === 0) return;
 
     const teacher = teachers.find(t => t.id === selectedTeacherId);

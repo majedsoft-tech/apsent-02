@@ -1551,10 +1551,6 @@ export default function App() {
   ];
 
   const handleMenuItemClick = (mode: "teacher" | "admin" | "super-admin", tab: any) => {
-    if (!currentUser || currentUser.isGuest) {
-      handleGoogleLogin();
-      return;
-    }
     setAppMode(mode);
     if (mode === "teacher") {
       setTeacherTab(tab);
@@ -1760,10 +1756,6 @@ export default function App() {
                                 type="button"
                                 id="btn-copy-stats-link"
                                 onClick={() => {
-                                  if (!currentUser || currentUser.isGuest) {
-                                    handleGoogleLogin();
-                                    return;
-                                  }
                                   handleCopyStatsLink();
                                 }}
                                 className="w-full flex items-center justify-between gap-1 text-[10px] text-blue-700 hover:text-blue-800 font-extrabold bg-white hover:bg-blue-50 border border-blue-200/80 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer shadow-3xs"
@@ -1794,10 +1786,6 @@ export default function App() {
                               <div className="absolute top-0 right-0 h-full w-1 bg-purple-500/80"></div>
                               <button
                                 onClick={() => {
-                                  if (!currentUser || currentUser.isGuest) {
-                                    handleGoogleLogin();
-                                    return;
-                                  }
                                   navigateTo("teacher");
                                 }}
                                 className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer ${
@@ -1820,10 +1808,6 @@ export default function App() {
                                   type="button"
                                   id="btn-copy-teacher-link"
                                   onClick={() => {
-                                    if (!currentUser || currentUser.isGuest) {
-                                      handleGoogleLogin();
-                                      return;
-                                    }
                                     handleCopyTeacherLink();
                                   }}
                                   className="w-full flex items-center justify-between gap-1 text-[10px] text-purple-700 hover:text-purple-800 font-extrabold bg-white hover:bg-purple-50 border border-purple-200/80 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer shadow-3xs"
@@ -1844,60 +1828,42 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* Morning Delay Registration Portal Card (بوابة تسجيل التأخر الصباحي) */}
+                            {/* Morning Delay Registration Portal Card (بوابة تسجيل التأخر الصباحي - معطلة حالياً قريباً) */}
                             <div 
                               id="sidebar-morning-delay-portal-container"
-                              className="bg-amber-50/60 rounded-xl p-2 border-2 border-amber-500/40 shadow-3xs space-y-2 relative overflow-hidden mt-2"
+                              className="bg-amber-50/40 rounded-xl p-2 border-2 border-amber-300/50 shadow-3xs space-y-2 relative overflow-hidden mt-2 opacity-85"
                             >
-                              <div className="absolute top-0 right-0 h-full w-1 bg-amber-500/80"></div>
+                              <div className="absolute top-0 right-0 h-full w-1 bg-amber-400"></div>
                               <button
-                                onClick={() => {
-                                  if (!currentUser || currentUser.isGuest) {
-                                    handleGoogleLogin();
-                                    return;
-                                  }
-                                  navigateTo("morning-delay");
-                                }}
-                                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer ${
-                                  appMode === "morning-delay"
-                                    ? "bg-amber-600 text-white shadow-md shadow-amber-600/20"
-                                    : "text-slate-700 hover:bg-amber-100/60 hover:text-amber-900"
-                                }`}
+                                type="button"
+                                disabled={true}
+                                title="قسم تسجيل التأخر الصباحي معطل حالياً - قريباً"
+                                className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black text-slate-500 bg-amber-100/40 cursor-not-allowed select-none"
                               >
                                 <div className="flex items-center gap-2">
-                                  <span className={appMode === "morning-delay" ? "text-white" : "text-amber-600"}><Clock className="w-4 h-4" /></span>
+                                  <span className="text-amber-600/70"><Clock className="w-4 h-4" /></span>
                                   <span>بوابة تسجيل التأخر الصباحي</span>
                                 </div>
-                                {appMode === "morning-delay" && (
-                                  <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
-                                )}
+                                <span className="px-1.5 py-0.5 text-[9px] font-black bg-amber-200 text-amber-900 rounded-md border border-amber-300/80 shadow-3xs">
+                                  قريباً
+                                </span>
                               </button>
                               
                               <div className="px-1">
                                 <button
                                   type="button"
                                   id="btn-copy-morning-delay-link"
-                                  onClick={() => {
-                                    if (!currentUser || currentUser.isGuest) {
-                                      handleGoogleLogin();
-                                      return;
-                                    }
-                                    handleCopyMorningDelayLink();
-                                  }}
-                                  className="w-full flex items-center justify-between gap-1 text-[10px] text-amber-800 hover:text-amber-900 font-extrabold bg-white hover:bg-amber-50 border border-amber-200/80 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer shadow-3xs"
-                                  title="نسخ رابط تسجيل التأخر الصباحي لمشاركته مع المشرفين مباشرة"
+                                  disabled={true}
+                                  title="رابط تسجيل التأخر الصباحي معطل حالياً - قريباً"
+                                  className="w-full flex items-center justify-between gap-1 text-[10px] text-slate-500 font-extrabold bg-white/80 border border-amber-200/60 rounded-md px-2.5 py-1.5 cursor-not-allowed select-none opacity-80"
                                 >
                                   <div className="flex items-center gap-1.5">
-                                    <Copy className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                                    <span>نسخ الرابط لمشرف التأخر</span>
+                                    <Clock className="w-3.5 h-3.5 text-amber-500/70" />
+                                    <span>رابط مشرف التأخر</span>
                                   </div>
-                                  {morningDelayCopied ? (
-                                    <span className="text-emerald-600 flex items-center gap-0.5 text-[9px] font-black">
-                                      <Check className="w-3 h-3 animate-bounce" /> تم النسخ
-                                    </span>
-                                  ) : (
-                                    <ExternalLink className="w-3 h-3 text-slate-400" />
-                                  )}
+                                  <span className="px-1.5 py-0.5 text-[9px] font-black bg-amber-100 text-amber-800 rounded border border-amber-200/80">
+                                    قريباً
+                                  </span>
                                 </button>
                               </div>
                             </div>
@@ -2088,10 +2054,10 @@ export default function App() {
               </div>
               <div className="space-y-1.5">
                 <h2 className="text-lg sm:text-xl font-black text-slate-900">
-                  لوحة إدارة المدرسة والمزامنة السحابية
+                  لوحة التحكم لتسجيل الغياب والتاخر الصباحي
                 </h2>
                 <p className="text-xs sm:text-sm font-medium text-slate-600 leading-relaxed max-w-sm mx-auto">
-                  اختر طريقة الدخول للاستعراض والإدارة والمزامنة الفورية عبر كافة الأجهزة:
+                  سجل الدخول بحساب Google للمتابعة والإدارة والمزامنة السحابية:
                 </p>
               </div>
 
@@ -2099,50 +2065,29 @@ export default function App() {
                 <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-right text-xs text-amber-900 space-y-2">
                   <div className="font-bold flex items-center gap-1.5 text-amber-800">
                     <span>⚠️</span>
-                    <span>تنبيه النطاق الخارجي (Cloudflare):</span>
+                    <span>تنبيه:</span>
                   </div>
                   <p className="leading-relaxed">
-                    تسجيل الدخول بحساب Google مقيد بالنطاقات المضافة في Firebase. يمكنك الدخول فوراً وبدون أي قيود كمدير للمدرسة ومزامنة جميع البيانات عبر الزر أدناه:
+                    {loginError}
                   </p>
                 </div>
               )}
 
               <div className="flex flex-col gap-3 pt-1">
-                {/* Primary: Direct School Access */}
-                <button
-                  type="button"
-                  id="btn-direct-admin-login"
-                  onClick={handleDirectAdminLogin}
-                  className="w-full inline-flex items-center justify-center gap-2.5 px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-2xl font-black text-xs sm:text-sm shadow-md shadow-emerald-600/25 transition-all transform hover:scale-[1.01] cursor-pointer"
-                >
-                  <ShieldCheck className="w-5 h-5" />
-                  <span>الدخول المباشر كمدير المدرسة (ام الحمام الثانوية)</span>
-                </button>
-
                 {/* Google Sign In */}
                 <button
                   type="button"
                   id="btn-main-google-login"
                   onClick={handleGoogleLogin}
-                  className="w-full inline-flex items-center justify-center gap-3 px-6 py-3 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded-2xl font-bold text-xs sm:text-sm shadow-sm transition-all cursor-pointer"
+                  className="w-full inline-flex items-center justify-center gap-3 px-6 py-3.5 bg-white hover:bg-slate-50 border-2 border-slate-200 hover:border-slate-300 text-slate-800 rounded-2xl font-black text-xs sm:text-sm shadow-sm transition-all transform hover:scale-[1.01] cursor-pointer"
                 >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path
                       fill="#EA4335"
                       d="M12.24 10.285V14.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l3.258-3.133C18.29 1.41 15.538 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.875 11.52-11.72 0-.788-.08-1.39-.18-1.995H12.24z"
                     />
                   </svg>
                   <span>تسجيل الدخول بحساب Google</span>
-                </button>
-
-                {/* Link by School Code */}
-                <button
-                  type="button"
-                  onClick={() => setIsSyncModalOpen(true)}
-                  className="w-full inline-flex items-center justify-center gap-2 py-2 text-indigo-600 hover:text-indigo-800 text-xs font-bold transition-colors cursor-pointer"
-                >
-                  <Key className="w-4 h-4" />
-                  <span>الربط بكود أو رابط مدرسة أخرى</span>
                 </button>
               </div>
             </div>
@@ -2181,7 +2126,7 @@ export default function App() {
                 setActiveTab={setTeacherTab}
                 navigateTo={navigateTo}
                 schoolName={schoolName}
-                isDirectTeacherLink={isDirectTeacherLink}
+                isDirectTeacherLink={true}
                 globalProgress={globalProgress}
                 setGlobalProgress={setGlobalProgress}
                 isGoogleAuthenticated={!!currentUser && !currentUser.isGuest}
