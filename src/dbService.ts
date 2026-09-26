@@ -134,7 +134,7 @@ export type SupportedEntityType = "classes" | "grades" | "students" | "teachers"
 // In-memory sets for 0ms synchronous lookups
 const memoryDeletedEntities = new Set<string>();
 const memoryDeletedAttEntries = new Map<string, number>(); // key -> deletion timestamp
-const memoryDeletedDelays = new Set<string>();
+const memoryDeletedDelays = new Map<string, number>(); // key -> deletion timestamp
 
 // Bootstrap memory sets from localStorage
 if (typeof window !== "undefined") {
@@ -152,8 +152,20 @@ if (typeof window !== "undefined") {
   try {
     const raw = localStorage.getItem(DELETED_DELAYS_KEY);
     if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) arr.forEach(k => memoryDeletedDelays.add(k));
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        if (Array.isArray(parsed)) {
+          // Clear legacy permanent string array that blocked re-recording
+          localStorage.removeItem(DELETED_DELAYS_KEY);
+        } else {
+          const now = Date.now();
+          Object.entries(parsed).forEach(([k, t]) => {
+            if (typeof t === "number" && now - t < 30000) {
+              memoryDeletedDelays.set(k, t);
+            }
+          });
+        }
+      }
     }
   } catch (_) {}
 }
@@ -269,44 +281,75 @@ export function isAttendanceEntryDeleted(recordId: string, studentId: string, is
   return false;
 }
 
-// Morning Delay tombstones by (date, studentId)
+// Morning Delay tombstones by (date, studentId) with short-lived TTL and update-time awareness
 export function recordDeletedMorningDelay(date: string, studentId: string): void {
   if (!date || !studentId) return;
   const key = `${date}:${studentId}`;
-  memoryDeletedDelays.add(key);
-  recordDeletedId("morning_delays", `delay_${date}_${studentId}`);
+  const canonicalId = `delay_${date}_${studentId}`;
+  const now = Date.now();
+  memoryDeletedDelays.set(key, now);
+  memoryDeletedDelays.set(canonicalId, now);
+  recordDeletedId("morning_delays", canonicalId);
   if (typeof window === "undefined") return;
   try {
     const raw = localStorage.getItem(DELETED_DELAYS_KEY);
-    const list: string[] = raw ? JSON.parse(raw) : [];
-    if (!list.includes(key)) {
-      list.push(key);
-      if (list.length > 10000) list.shift();
-      localStorage.setItem(DELETED_DELAYS_KEY, JSON.stringify(list));
-    }
+    const map: Record<string, number> = raw ? JSON.parse(raw) : {};
+    map[key] = now;
+    map[canonicalId] = now;
+    localStorage.setItem(DELETED_DELAYS_KEY, JSON.stringify(map));
   } catch (_) {}
 }
 
-export function isMorningDelayDeleted(date?: string, studentId?: string): boolean {
+export function isMorningDelayDeleted(date?: string, studentId?: string, recordUpdatedAt?: number): boolean {
   if (!date || !studentId) return false;
   const key = `${date}:${studentId}`;
-  if (memoryDeletedDelays.has(key)) return true;
-  if (isIdDeleted("morning_delays", `delay_${date}_${studentId}`)) return true;
+  const canonicalId = `delay_${date}_${studentId}`;
+  let deletedTime = memoryDeletedDelays.get(key) || memoryDeletedDelays.get(canonicalId);
+  if (!deletedTime && typeof window !== "undefined") {
+    try {
+      const raw = localStorage.getItem(DELETED_DELAYS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === "object" && parsed !== null) {
+          deletedTime = parsed[key] || parsed[canonicalId];
+          if (deletedTime) memoryDeletedDelays.set(key, deletedTime);
+        }
+      }
+    } catch (_) {}
+  }
+  if (deletedTime) {
+    // 1. Short-lived 25s TTL: only protect against in-flight Firestore write race conditions
+    if (Date.now() - deletedTime > 25000) {
+      unrecordDeletedMorningDelay(date, studentId);
+      return false;
+    }
+    // 2. If the record itself has been saved/updated AFTER this deletion, the record is authoritative
+    if (recordUpdatedAt && recordUpdatedAt >= deletedTime) {
+      unrecordDeletedMorningDelay(date, studentId);
+      return false;
+    }
+    return true;
+  }
   return false;
 }
 
 export function unrecordDeletedMorningDelay(date: string, studentId: string): void {
   if (!date || !studentId) return;
   const key = `${date}:${studentId}`;
+  const canonicalId = `delay_${date}_${studentId}`;
   memoryDeletedDelays.delete(key);
-  unmarkDeletedId("morning_delays", `delay_${date}_${studentId}`);
+  memoryDeletedDelays.delete(canonicalId);
+  unmarkDeletedId("morning_delays", canonicalId);
   if (typeof window === "undefined") return;
   try {
     const raw = localStorage.getItem(DELETED_DELAYS_KEY);
     if (raw) {
-      const list: string[] = JSON.parse(raw);
-      const filtered = list.filter(k => k !== key && k !== `delay_${date}_${studentId}`);
-      localStorage.setItem(DELETED_DELAYS_KEY, JSON.stringify(filtered));
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === "object" && parsed !== null) {
+        delete parsed[key];
+        delete parsed[canonicalId];
+        localStorage.setItem(DELETED_DELAYS_KEY, JSON.stringify(parsed));
+      }
     }
   } catch (_) {}
 }
@@ -355,11 +398,12 @@ export function sanitizeAttendanceRecord(record: any): any {
 export function isRecordTombstoned(colName: string, item: any): boolean {
   if (!item) return true;
   const id = item.id || item._docId || item._origId;
+  const recTime = typeof item.updatedAt === "number" ? item.updatedAt : (typeof item.timestamp === "number" ? item.timestamp : 0);
   if (id && isIdDeleted(colName, id)) return true;
 
   if (colName === MORNING_DELAYS_COLL) {
-    if (isMorningDelayDeleted(item.date, item.studentId)) return true;
-    if (id && isMorningDelayDeleted(undefined, id)) return true;
+    if (isMorningDelayDeleted(item.date, item.studentId, recTime)) return true;
+    if (id && isMorningDelayDeleted(undefined, id, recTime)) return true;
   }
   return false;
 }
@@ -661,15 +705,15 @@ const auth = {
 };
 
 // Collection Names
-const GRADES_COLL = "grades";
-const CLASSES_COLL = "classes";
-const TEACHERS_COLL = "teachers";
-const STUDENTS_COLL = "students";
-const ATTENDANCE_COLL = "attendance";
-const BEHAVIORS_COLL = "behaviors";
-const MORNING_DELAYS_COLL = "morning_delays";
-const SETTINGS_COLL = "settings";
-const USERS_COLL = "registered_users";
+export const GRADES_COLL = "grades";
+export const CLASSES_COLL = "classes";
+export const TEACHERS_COLL = "teachers";
+export const STUDENTS_COLL = "students";
+export const ATTENDANCE_COLL = "attendance";
+export const BEHAVIORS_COLL = "behaviors";
+export const MORNING_DELAYS_COLL = "morning_delays";
+export const SETTINGS_COLL = "settings";
+export const USERS_COLL = "registered_users";
 
 // --- ROBUST LOCAL CACHE & SYNC ENGINE ---
 function getLocalStorageKey(colName: string, uid?: string): string {
@@ -678,7 +722,7 @@ function getLocalStorageKey(colName: string, uid?: string): string {
   return userUid ? `school_offline_cache_${userUid}_${colName}` : `school_offline_cache_${colName}`;
 }
 
-function getLocalItems(colName: string, uid?: string): any[] {
+export function getLocalItems(colName: string, uid?: string): any[] {
   const eff = getEffectiveUidAndEmail();
   const currentUid = uid || eff.uid || "";
   const currentEmail = (eff.email || "").toLowerCase().trim();
@@ -755,7 +799,11 @@ function saveOrUpdateLocalItem(colName: string, item: any, uid?: string) {
   if ((!currentUid && !eff.email) || !item) return;
   const items = getLocalItems(colName, currentUid);
   const safeItems = Array.isArray(items) ? [...items] : [];
-  const idx = safeItems.findIndex(i => i && (i.id === item.id || (i._docId && i._docId === item.id)));
+  const idx = safeItems.findIndex(i => i && (
+    i.id === item.id || 
+    (i._docId && i._docId === item.id) ||
+    (colName === MORNING_DELAYS_COLL && item.studentId && item.date && i.studentId === item.studentId && i.date === item.date)
+  ));
   if (idx >= 0) {
     safeItems[idx] = { ...safeItems[idx], ...item };
   } else {
@@ -776,7 +824,11 @@ function bulkSaveOrUpdateLocalItems(colName: string, itemsToSave: any[], uid?: s
   let changed = false;
   itemsToSave.forEach(item => {
     if (!item || !item.id) return;
-    const idx = safeItems.findIndex(i => i && (i.id === item.id || (i._docId && i._docId === item.id)));
+    const idx = safeItems.findIndex(i => i && (
+      i.id === item.id || 
+      (i._docId && i._docId === item.id) ||
+      (colName === MORNING_DELAYS_COLL && item.studentId && item.date && i.studentId === item.studentId && i.date === item.date)
+    ));
     if (idx >= 0) {
       safeItems[idx] = { ...safeItems[idx], ...item };
     } else {
@@ -972,6 +1024,25 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
           window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { record: data.record, type: "delay_recorded" } }));
           window.dispatchEvent(new CustomEvent("school_refresh_stats"));
           window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "delay_recorded" } }));
+        } catch (_) {}
+        return;
+      }
+
+      if (data.type === "delays_batch_recorded" && Array.isArray(data.records)) {
+        data.records.forEach((rec: any) => {
+          if (rec && rec.id) {
+            unmarkDeletedId(MORNING_DELAYS_COLL, rec.id);
+            if (rec.date && rec.studentId) {
+              unrecordDeletedMorningDelay(rec.date, rec.studentId);
+            }
+          }
+        });
+        bulkSaveOrUpdateLocalItems(MORNING_DELAYS_COLL, data.records);
+        notifyCollectionSubscribers(MORNING_DELAYS_COLL, undefined, true);
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { records: data.records, type: "delays_batch_recorded" } }));
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "delays_batch_recorded" } }));
         } catch (_) {}
         return;
       }
@@ -1207,7 +1278,18 @@ function connectSSE(): void {
               bulkSaveOrUpdateLocalItems(MORNING_DELAYS_COLL, valid);
             }
           }
+          notifyCollectionSubscribers(MORNING_DELAYS_COLL, undefined, true);
           try {
+            const hasDeleted = (Array.isArray(payload.data?.deletedIds) && payload.data.deletedIds.length > 0) || (payload.data?.studentId && payload.data?.date);
+            const actionType = payload.data?.type || (hasDeleted ? "delay_deleted" : "delay_recorded");
+            window.dispatchEvent(new CustomEvent("school_refresh_delays", { 
+              detail: { 
+                ...payload.data, 
+                type: actionType,
+                deletedId: payload.data?.deletedId || payload.data?.deletedIds?.[0],
+                record: payload.data?.record || payload.data?.records?.[0]
+              } 
+            }));
             window.dispatchEvent(new CustomEvent("school_refresh_stats"));
             window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL } }));
           } catch (_) {}
@@ -1340,6 +1422,50 @@ export function initServerSyncEngine(): void {
       const code = getSchoolCode();
       const currentEff = getEffectiveUidAndEmail();
       const q = new URLSearchParams();
+      if (code) q.set("schoolCode", code);
+      if (currentEff.email && !currentEff.isGuest && !currentEff.email.includes("@school.local")) q.set("email", currentEff.email);
+      if (currentEff.uid && !currentEff.isGuest && !currentEff.uid.startsWith("guest")) q.set("uid", currentEff.uid);
+
+      // Fast sync delays directly to guarantee 100% instant sync between independent links and control panel
+      try {
+        const delaysRes = await fetch(`/api/sync/delays?${q.toString()}`);
+        if (delaysRes.ok) {
+          const delaysJson = await delaysRes.json();
+          if (delaysJson.success && Array.isArray(delaysJson.records)) {
+            const valid = delaysJson.records.filter((d: any) =>
+              d && d.id && !isIdDeleted("morning_delays", d.id) && !isMorningDelayDeleted(d.date, d.studentId, d.updatedAt)
+            );
+            const cur = getLocalItems(MORNING_DELAYS_COLL, currentEff.uid);
+            let hasChange = false;
+            const curMap = new Map(cur.map((d: any) => [d.id, d]));
+            // Check for deletions on server
+            if (delaysJson.records.length < cur.length && delaysJson.records.length > 0) {
+              const serverIds = new Set(delaysJson.records.map((d: any) => d.id));
+              cur.forEach((d: any) => {
+                if (d && d.id && !serverIds.has(d.id)) {
+                  curMap.delete(d.id);
+                  hasChange = true;
+                }
+              });
+            }
+            for (const item of valid) {
+              const existing = curMap.get(item.id);
+              if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+                curMap.set(item.id, item);
+                hasChange = true;
+              }
+            }
+            if (hasChange) {
+              const merged = Array.from(curMap.values());
+              setLocalItems(MORNING_DELAYS_COLL, merged, currentEff.uid);
+              notifyCollectionSubscribers(MORNING_DELAYS_COLL, merged);
+              window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { records: merged, type: "poll_sync" } }));
+              window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+              window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "poll_sync" } }));
+            }
+          }
+        }
+      } catch (_) {}
 
       const res = await fetch(`/api/sync/all?${q.toString()}`);
       if (res.ok) {
@@ -1496,6 +1622,9 @@ export function initServerSyncEngine(): void {
                 const merged = Array.from(curMap.values());
                 setLocalItems(MORNING_DELAYS_COLL, merged, currentEff.uid);
                 notifyCollectionSubscribers(MORNING_DELAYS_COLL, merged);
+                window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { records: merged, type: "poll_sync" } }));
+                window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+                window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "poll_sync" } }));
               }
             }
           }
@@ -1531,9 +1660,18 @@ export function initServerSyncEngine(): void {
   };
 
   pollServer();
-  setInterval(pollServer, 10000);
+  // 3-second live poll for instantaneous cross-device sync without requiring manual page refresh
+  setInterval(() => {
+    if (typeof document === "undefined" || !document.hidden) {
+      pollServer();
+    }
+  }, 3000);
   if (typeof window !== "undefined") {
     window.addEventListener("focus", () => pollServer());
+    window.addEventListener("online", () => pollServer());
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) pollServer();
+    });
   }
 }
 
@@ -3358,6 +3496,7 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
 
   // 1. Instant local cache update (0ms synchronous)
   saveOrUpdateLocalItem(MORNING_DELAYS_COLL, fullRecord, uid);
+  notifyCollectionSubscribers(MORNING_DELAYS_COLL);
 
   // Broadcast to other tabs/windows in real time (0ms)
   if (realTimeSyncChannel) {
@@ -3384,7 +3523,7 @@ export async function saveMorningDelayRecord(record: Omit<MorningDelayRecord, "i
   }
 
   // 2. Real-time server sync (background)
-  postToServerSync("/api/sync/delays", { record: fullRecord });
+  postToServerSync("/api/sync/delays", { record: fullRecord, schoolCode: getSchoolCode() });
 
   // 3. Real-time Firestore write safely with non-blocking timeout
   try {
@@ -3454,9 +3593,10 @@ export async function saveMorningDelaysBatch(records: Omit<MorningDelayRecord, "
     fullRecords.push(full);
     saveOrUpdateLocalItem(MORNING_DELAYS_COLL, full, uid);
   });
+  notifyCollectionSubscribers(MORNING_DELAYS_COLL);
 
   // Real-time server sync
-  postToServerSync("/api/sync/delays", { records: fullRecords });
+  postToServerSync("/api/sync/delays", { records: fullRecords, schoolCode });
 
   // Broadcast to other tabs/windows in real time (0ms)
   if (realTimeSyncChannel) {
@@ -3545,6 +3685,7 @@ export async function deleteMorningDelayRecord(
     if (targetStudentId && targetDate && item.studentId === targetStudentId && item.date === targetDate) return true;
     return false;
   }, uid);
+  notifyCollectionSubscribers(MORNING_DELAYS_COLL);
 
   // 3. Broadcast real-time deletion across open tabs/windows (0ms)
   const delIds = [id, targetDate && targetStudentId ? `delay_${targetDate}_${targetStudentId}` : ""].filter(Boolean);
@@ -3584,7 +3725,8 @@ export async function deleteMorningDelayRecord(
   postToServerSync("/api/sync/delays", {
     deletedIds: [id, targetDate && targetStudentId ? `delay_${targetDate}_${targetStudentId}` : ""].filter(Boolean),
     studentId: targetStudentId,
-    date: targetDate
+    date: targetDate,
+    schoolCode: getSchoolCode()
   });
 
   // 5. Real-time Firestore deletion across exact ID, canonical ID, and all matching docs
@@ -3627,9 +3769,7 @@ export async function deleteMorningDelayRecord(
     }
 
     if (batchCount > 0) {
-      batch.commit().catch(err => {
-        console.warn("Firestore delete batch warning:", err);
-      });
+      await safeFirestoreWrite(batch.commit(), 3000);
     }
   } catch (err: any) {
     handleFirestoreError(err);
@@ -4883,12 +5023,15 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
           }
         });
 
-        // CRITICAL: Merge with non-tombstoned local cache items so recently recorded items are NEVER wiped out by a delayed snapshot!
+        // Only preserve fresh in-flight local items (< 15 seconds old) that haven't synced yet, to prevent resurrecting deleted records!
         const existingLocal = getLocalItems(colName, activeUid);
         if (Array.isArray(existingLocal) && existingLocal.length > 0) {
+          const now = Date.now();
           existingLocal.forEach(localItem => {
             if (!localItem || !localItem.id) return;
-            if (!seenIds.has(localItem.id) && isDocBelongingToUser(localItem, activeUid, activeEmail) && !isRecordTombstoned(colName, localItem)) {
+            const itemAge = now - (localItem.updatedAt || localItem.timestamp || 0);
+            const isFreshInFlight = itemAge < 15000;
+            if (!seenIds.has(localItem.id) && isFreshInFlight && isDocBelongingToUser(localItem, activeUid, activeEmail) && !isRecordTombstoned(colName, localItem)) {
               seenIds.add(localItem.id);
               results.push(localItem);
             }
@@ -4910,6 +5053,17 @@ function subscribeToCollection(colName: string, callback: (data: any[]) => void,
         hub.callbacks.forEach(cb => {
           try { cb(results); } catch (_) {}
         });
+
+        // Dispatch instant event for UI components
+        if (typeof window !== "undefined") {
+          try {
+            if (colName === MORNING_DELAYS_COLL) {
+              window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { records: results, type: "firestore_snapshot" } }));
+            }
+            window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName, type: "firestore_snapshot" } }));
+          } catch (_) {}
+        }
 
         // Keep server sync cache populated with authoritative Firestore records
         if (results.length > 0) {

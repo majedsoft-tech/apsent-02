@@ -7,7 +7,9 @@ import {
   deleteMorningDelayRecord,
   subscribeToMorningDelayRecords,
   isMorningDelayDeleted,
-  isIdDeleted
+  isIdDeleted,
+  getLocalItems,
+  MORNING_DELAYS_COLL
 } from "../dbService";
 import { 
   Clock, 
@@ -125,59 +127,96 @@ export default function MorningDelayPortal({
   // Real-time Firestore Subscription & Instant Event Listeners for Morning Delay Records
   useEffect(() => {
     setLoading(true);
+
+    const syncFromLocalCache = () => {
+      const local = getLocalItems(MORNING_DELAYS_COLL);
+      if (Array.isArray(local)) {
+        const filtered = local
+          .filter(r => r && r.date === selectedDate && !isMorningDelayDeleted(r.date, r.studentId, r.updatedAt) && !isIdDeleted("morning_delays", r.id))
+          .sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
+        setRecords(filtered);
+      }
+    };
+
+    // Initial load from local cache (0ms)
+    syncFromLocalCache();
+
     const unsub = subscribeToMorningDelayRecords(selectedDate, (newRecords) => {
-      setRecords(prev => {
-        const safeNew = Array.isArray(newRecords) ? newRecords : [];
-        const validNew = safeNew.filter(r => r && !isMorningDelayDeleted(r.date, r.studentId) && !isIdDeleted("morning_delays", r.id));
-        const serverIds = new Set(validNew.map(r => r.studentId));
-        // Preserve optimistic records that are in-flight (< 10s old) and not tombstoned
-        const freshOptimistic = prev.filter(r => {
-          if (!r || !r.studentId) return false;
-          if (serverIds.has(r.studentId)) return false;
-          if (isMorningDelayDeleted(r.date, r.studentId) || isIdDeleted("morning_delays", r.id)) return false;
-          const age = Date.now() - (r.timestamp || 0);
-          return age < 10000;
-        });
-        return [...freshOptimistic, ...validNew];
-      });
+      const safeNew = Array.isArray(newRecords) ? newRecords : [];
+      const validNew = safeNew
+        .filter(r => r && !isMorningDelayDeleted(r.date, r.studentId, r.updatedAt) && !isIdDeleted("morning_delays", r.id))
+        .sort((a, b) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
+      setRecords(validNew);
       setLoading(false);
     }, (_err) => {
       setLoading(false);
     });
 
-    // Real-time cross-tab and cross-component broadcast listener (0ms instant update)
+    // Real-time cross-tab, cross-device, and cross-component broadcast listener (0ms instant update)
     const handleDelayEvent = (e: any) => {
       const detail = e?.detail;
-      if (!detail) return;
-      if (detail.type === "delay_deleted") {
+
+      if (detail && Array.isArray(detail.records)) {
+        const filtered = detail.records
+          .filter((r: any) => r && r.date === selectedDate && !isMorningDelayDeleted(r.date, r.studentId, r.updatedAt) && !isIdDeleted("morning_delays", r.id))
+          .sort((a: any, b: any) => (b.arrivalTime || "").localeCompare(a.arrivalTime || ""));
+        setRecords(filtered);
+        return;
+      }
+
+      if (detail?.type === "delay_deleted") {
+        const delId = detail.deletedId;
+        const delIds = Array.isArray(detail.deletedIds) ? detail.deletedIds : [delId].filter(Boolean);
+        const sId = detail.studentId;
+        const dDate = detail.date;
         setRecords(prev => prev.filter(r => {
-          if (detail.deletedId && (r.id === detail.deletedId || (r as any)._docId === detail.deletedId)) return false;
-          if (Array.isArray(detail.deletedIds) && detail.deletedIds.includes(r.id)) return false;
-          if (detail.studentId && detail.date && r.studentId === detail.studentId && r.date === detail.date) return false;
+          if (delIds.length > 0 && (delIds.includes(r.id) || (r as any)._docId && delIds.includes((r as any)._docId))) return false;
+          if (sId && dDate && r.studentId === sId && r.date === dDate) return false;
           return true;
         }));
-      } else if ((detail.type === "delay_recorded" || detail.type === "delays_batch_recorded") && (detail.record || detail.records)) {
+        return;
+      }
+
+      if ((detail?.type === "delay_recorded" || detail?.type === "delays_batch_recorded") && (detail.record || detail.records)) {
         const incoming = detail.records ? detail.records : [detail.record];
         setRecords(prev => {
           let updated = [...prev];
           incoming.forEach((rec: any) => {
             if (rec && rec.date === selectedDate) {
-              updated = updated.filter(r => r.studentId !== rec.studentId && r.id !== rec.id);
+              updated = updated.filter(r => !(r.id === rec.id || (r.studentId === rec.studentId && r.date === rec.date)));
               updated.unshift(rec);
             }
           });
           return updated;
         });
+        return;
+      }
+
+      // Default fallback for any general sync event: load fresh state from local items immediately
+      syncFromLocalCache();
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document === "undefined" || !document.hidden) {
+        syncFromLocalCache();
       }
     };
 
     window.addEventListener("school_refresh_delays", handleDelayEvent);
     window.addEventListener("school_data_synced", handleDelayEvent);
+    window.addEventListener("school_refresh_stats", handleDelayEvent);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    window.addEventListener("online", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
     return () => {
       if (unsub) unsub();
       window.removeEventListener("school_refresh_delays", handleDelayEvent);
       window.removeEventListener("school_data_synced", handleDelayEvent);
+      window.removeEventListener("school_refresh_stats", handleDelayEvent);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      window.removeEventListener("online", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, [selectedDate]);
 

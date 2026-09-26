@@ -37,7 +37,9 @@ import {
   importSchoolBackupData,
   testCloudFirestoreConnection,
   syncAllLocalDataToFirestore,
-  isIdDeleted
+  isIdDeleted,
+  getLocalItems,
+  MORNING_DELAYS_COLL
 } from "../dbService";
 import { FirebaseDiagnosticModal } from "./FirebaseDiagnosticModal";
 import { 
@@ -372,6 +374,14 @@ export default function AdminPanel({
     grade3Entries: [] as any[],
     entriesByGrade: {} as Record<string, any[]>
   });
+
+  const cachedAttendanceRef = useRef<AttendanceRecord[]>([]);
+  const cachedBehaviorsRef = useRef<BehaviorRecord[]>([]);
+  const cachedDelaysRef = useRef<MorningDelayRecord[]>([]);
+  const behaviorsReceivedRef = useRef<boolean>(false);
+  const computeDebounceTimerRef = useRef<any>(null);
+  const runComputeRef = useRef<() => void>(() => {});
+  const runCompute = () => { runComputeRef.current(); };
 
   // States for student report tab
   const [reportGradeId, setReportGradeId] = useState<string>("");
@@ -2083,17 +2093,11 @@ export default function AdminPanel({
     }
   }, [searchGradeId, classes]);
 
-  const cachedAttendanceRef = useRef<AttendanceRecord[]>([]);
-  const cachedBehaviorsRef = useRef<BehaviorRecord[]>([]);
-  const cachedDelaysRef = useRef<MorningDelayRecord[]>([]);
-  const behaviorsReceivedRef = useRef<boolean>(false);
-  const computeDebounceTimerRef = useRef<any>(null);
-
   useEffect(() => {
     if (isAuthenticated || isReadOnly) {
       setStatsLoading(true);
       
-      const runCompute = () => {
+      const computeRunner = () => {
         if (computeDebounceTimerRef.current) clearTimeout(computeDebounceTimerRef.current);
         computeDebounceTimerRef.current = setTimeout(() => {
           computeStatistics(
@@ -2109,9 +2113,11 @@ export default function AdminPanel({
           if (reportStudentId) {
             loadStudentReport(reportStudentId);
           }
-          setStatsLoading(false);
-        }, 60);
+        }, 50);
       };
+
+      runComputeRef.current = computeRunner;
+      const runCompute = computeRunner;
 
       // Proactively load authoritative statistics on mount/refresh
       loadStatistics();
@@ -2147,12 +2153,9 @@ export default function AdminPanel({
 
       const unsubDelays = subscribeToAllMorningDelayRecords(
         (records) => {
-          if (cachedDelaysRef.current.length > 0 && records.length === 0) {
-            const hasExistingNotDeleted = cachedDelaysRef.current.some(d => !isIdDeleted("morning_delays", d.id));
-            if (hasExistingNotDeleted) return;
-          }
-          cachedDelaysRef.current = records;
-          setMorningDelaysList(records);
+          const safeRecords = Array.isArray(records) ? records : [];
+          cachedDelaysRef.current = safeRecords;
+          setMorningDelaysList(safeRecords);
           runCompute();
         },
         (_error) => {
@@ -2160,22 +2163,46 @@ export default function AdminPanel({
         }
       );
 
+      const syncLocalDelays = () => {
+        const local = getLocalItems(MORNING_DELAYS_COLL);
+        if (Array.isArray(local) && local.length > 0) {
+          cachedDelaysRef.current = local;
+          setMorningDelaysList(local);
+        }
+      };
+
       const handleForceRefresh = () => {
+        syncLocalDelays();
         loadStatistics();
       };
+
       const handleDataSynced = () => {
+        syncLocalDelays();
         runCompute();
       };
+
       const handleDelaysUpdated = (e: any) => {
         const detail = e?.detail;
-        if (!detail) return;
+        if (!detail) {
+          syncLocalDelays();
+          runCompute();
+          return;
+        }
+
+        if (Array.isArray(detail.records)) {
+          cachedDelaysRef.current = detail.records;
+          setMorningDelaysList(detail.records);
+          runCompute();
+          return;
+        }
+
         if (detail.type === "delay_deleted") {
           const delId = detail.deletedId;
           const delIds = Array.isArray(detail.deletedIds) ? detail.deletedIds : [delId].filter(Boolean);
           const sId = detail.studentId;
           const dDate = detail.date;
           const matchDeleted = (d: any) => d && (
-            (delIds.length > 0 && delIds.includes(d.id)) ||
+            (delIds.length > 0 && (delIds.includes(d.id) || (d._docId && delIds.includes(d._docId)))) ||
             (sId && dDate && d.studentId === sId && d.date === dDate)
           );
           if (Array.isArray(cachedDelaysRef.current)) {
@@ -2188,7 +2215,7 @@ export default function AdminPanel({
             let updatedCached = [...cachedDelaysRef.current];
             incoming.forEach((rec: any) => {
               if (rec && rec.id) {
-                updatedCached = updatedCached.filter(d => d.id !== rec.id && d.studentId !== rec.studentId);
+                updatedCached = updatedCached.filter(d => !(d.id === rec.id || (d.studentId === rec.studentId && d.date === rec.date)));
                 updatedCached.unshift(rec);
               }
             });
@@ -2198,19 +2225,31 @@ export default function AdminPanel({
             let updatedList = [...prev];
             incoming.forEach((rec: any) => {
               if (rec && rec.id) {
-                updatedList = updatedList.filter(d => d.id !== rec.id && d.studentId !== rec.studentId);
+                updatedList = updatedList.filter(d => !(d.id === rec.id || (d.studentId === rec.studentId && d.date === rec.date)));
                 updatedList.unshift(rec);
               }
             });
             return updatedList;
           });
+        } else {
+          syncLocalDelays();
         }
         runCompute();
+      };
+
+      const handleVisibilityOrFocus = () => {
+        if (typeof document === "undefined" || !document.hidden) {
+          syncLocalDelays();
+          runCompute();
+        }
       };
 
       window.addEventListener("school_refresh_delays", handleDelaysUpdated);
       window.addEventListener("school_refresh_stats", handleForceRefresh);
       window.addEventListener("school_data_synced", handleDataSynced);
+      window.addEventListener("focus", handleVisibilityOrFocus);
+      window.addEventListener("online", handleVisibilityOrFocus);
+      document.addEventListener("visibilitychange", handleVisibilityOrFocus);
 
       return () => {
         if (computeDebounceTimerRef.current) clearTimeout(computeDebounceTimerRef.current);
@@ -2220,6 +2259,9 @@ export default function AdminPanel({
         window.removeEventListener("school_refresh_delays", handleDelaysUpdated);
         window.removeEventListener("school_refresh_stats", handleForceRefresh);
         window.removeEventListener("school_data_synced", handleDataSynced);
+        window.removeEventListener("focus", handleVisibilityOrFocus);
+        window.removeEventListener("online", handleVisibilityOrFocus);
+        document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
       };
     }
   }, [isAuthenticated, isReadOnly, isGoogleAuthenticated, schoolName]);

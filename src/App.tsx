@@ -34,7 +34,9 @@ import {
   refreshServerSyncConnection,
   bootstrapSchoolToServer,
   ensureRegisteredSchoolLoaded,
-  isIdDeleted
+  isIdDeleted,
+  getLocalItems,
+  MORNING_DELAYS_COLL
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -805,13 +807,40 @@ export default function App() {
       });
 
       const unsubDelays = subscribeToAllMorningDelayRecords((records) => {
-        if (latestDelays.length > 0 && Array.isArray(records) && records.length === 0) {
-          const hasExistingNotDeleted = latestDelays.some(d => !isIdDeleted("morning_delays", d.id));
-          if (hasExistingNotDeleted) return;
-        }
         latestDelays = Array.isArray(records) ? records : [];
         computeLiveTodayCounts();
       });
+
+      const handleAppDelayRefresh = (e: any) => {
+        const detail = e?.detail;
+        if (detail?.type === "delay_deleted") {
+          const delId = detail.deletedId;
+          const delIds = Array.isArray(detail.deletedIds) ? detail.deletedIds : [delId].filter(Boolean);
+          const sId = detail.studentId;
+          const dDate = detail.date;
+          latestDelays = latestDelays.filter(d => {
+            if (delIds.length > 0 && delIds.includes(d.id)) return false;
+            if (sId && dDate && d.studentId === sId && d.date === dDate) return false;
+            return true;
+          });
+        } else if ((detail?.type === "delay_recorded" || detail?.type === "delays_batch_recorded") && (detail.record || detail.records)) {
+          const incoming = detail.records ? detail.records : [detail.record];
+          incoming.forEach((rec: any) => {
+            if (rec && rec.id) {
+              latestDelays = latestDelays.filter(d => !(d.id === rec.id || (d.studentId === rec.studentId && d.date === rec.date)));
+              latestDelays.unshift(rec);
+            }
+          });
+        } else {
+          const local = getLocalItems(MORNING_DELAYS_COLL);
+          if (Array.isArray(local) && local.length > 0) {
+            latestDelays = local;
+          }
+        }
+        computeLiveTodayCounts();
+      };
+      window.addEventListener("school_refresh_delays", handleAppDelayRefresh);
+      window.addEventListener("school_data_synced", handleAppDelayRefresh);
 
       const unsubBehaviors = subscribeToAllBehaviorRecords((records) => {
         if (latestBehaviors.length > 0 && Array.isArray(records) && records.length === 0) {
@@ -856,6 +885,8 @@ export default function App() {
         if (unsubAttendance) (unsubAttendance as () => void)();
         if (unsubDelays) (unsubDelays as () => void)();
         if (unsubBehaviors) (unsubBehaviors as () => void)();
+        window.removeEventListener("school_refresh_delays", handleAppDelayRefresh);
+        window.removeEventListener("school_data_synced", handleAppDelayRefresh);
       };
     } catch (err) {
       console.error("Error doing database subscriptions:", err);

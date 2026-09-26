@@ -300,11 +300,13 @@ app.get("/api/sync/delays", (req, res) => {
 
 app.post("/api/sync/delays", (req, res) => {
   const { record, records, deletedIds, studentId, date, clearAll, schoolCode, userEmail, userId } = req.body;
+  const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
+  const effectiveSchoolCode = (schoolCode || record?.schoolCode || records?.[0]?.schoolCode || "").toLowerCase().trim();
 
   if (clearAll) {
-    delaysCache = delaysCache.filter(r => !matchesSchool(r, schoolCode, userEmail, userId));
+    delaysCache = delaysCache.filter(r => !matchesSchool(r, effectiveSchoolCode, userEmail, userId));
     writeJsonFile(DELAYS_FILE, delaysCache);
-    broadcastSyncEvent("delay_updated", { records: [], clearAll: true, schoolCode });
+    broadcastSyncEvent("delay_updated", { records: [], clearAll: true, schoolCode: effectiveSchoolCode, type: "clear_all" });
     return res.json({ success: true, count: 0, cleared: true });
   }
 
@@ -321,7 +323,6 @@ app.post("/api/sync/delays", (req, res) => {
     });
   }
 
-  const itemsToProcess = Array.isArray(records) ? records : (record ? [record] : []);
   if (itemsToProcess.length === 0 && deletedList.length === 0 && (!targetStudentId || !targetDate)) {
     return res.status(400).json({ success: false, error: "No delay records provided" });
   }
@@ -329,7 +330,11 @@ app.post("/api/sync/delays", (req, res) => {
   let updatedCount = 0;
   for (const item of itemsToProcess) {
     if (!item || !item.id) continue;
-    const existingIdx = delaysCache.findIndex(r => r.id === item.id || (item._docId && r.id === item._docId));
+    const existingIdx = delaysCache.findIndex(r => 
+      r.id === item.id || 
+      (item._docId && r.id === item._docId) ||
+      (item.studentId && item.date && r.studentId === item.studentId && r.date === item.date)
+    );
     if (existingIdx >= 0) {
       delaysCache[existingIdx] = { ...delaysCache[existingIdx], ...item, updatedAt: Date.now() };
     } else {
@@ -339,12 +344,16 @@ app.post("/api/sync/delays", (req, res) => {
   }
 
   writeJsonFile(DELAYS_FILE, delaysCache);
+  const actionType = (deletedList.length > 0 || (targetStudentId && targetDate)) ? "delay_deleted" : "delay_recorded";
   broadcastSyncEvent("delay_updated", {
+    type: actionType,
     records: itemsToProcess,
+    record: itemsToProcess[0] || null,
     deletedIds: deletedList,
+    deletedId: deletedList[0] || null,
     studentId: targetStudentId,
     date: targetDate,
-    schoolCode
+    schoolCode: effectiveSchoolCode
   });
 
   res.json({ success: true, updatedCount });
