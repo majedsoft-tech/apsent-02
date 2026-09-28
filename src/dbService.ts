@@ -985,6 +985,29 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
         return;
       }
 
+      if (data.type === "attendance_saved" && data.record) {
+        unmarkDeletedId(ATTENDANCE_COLL, data.record.id);
+        saveOrUpdateLocalItem(ATTENDANCE_COLL, data.record);
+        notifyCollectionSubscribers(ATTENDANCE_COLL, undefined, true);
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_attendance", { detail: { record: data.record, type: "attendance_saved" } }));
+          window.dispatchEvent(new CustomEvent("school_refresh_stats", { detail: { record: data.record, type: "attendance_saved" } }));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, record: data.record, type: "attendance_saved" } }));
+        } catch (_) {}
+        return;
+      }
+
+      if (data.type === "behavior_saved" && data.record) {
+        unmarkDeletedId(BEHAVIORS_COLL, data.record.id);
+        saveOrUpdateLocalItem(BEHAVIORS_COLL, data.record);
+        notifyCollectionSubscribers(BEHAVIORS_COLL, undefined, true);
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_stats", { detail: { record: data.record, type: "behavior_saved" } }));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: BEHAVIORS_COLL, record: data.record, type: "behavior_saved" } }));
+        } catch (_) {}
+        return;
+      }
+
       if (data.type === "attendance_deleted") {
         if (Array.isArray(data.deletedIds)) {
           data.deletedIds.forEach((delId: string) => {
@@ -993,6 +1016,7 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
           });
         }
         try {
+          window.dispatchEvent(new CustomEvent("school_refresh_attendance", { detail: { deletedIds: data.deletedIds, type: "attendance_deleted" } }));
           window.dispatchEvent(new CustomEvent("school_refresh_stats"));
           window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, type: data.type } }));
         } catch (_) {}
@@ -1007,6 +1031,7 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
           }
         }
         try {
+          window.dispatchEvent(new CustomEvent("school_refresh_attendance", { detail: { record: data.updatedRecord, recordId: data.recordId, studentId: data.studentId, type: "attendance_entry_deleted" } }));
           window.dispatchEvent(new CustomEvent("school_refresh_stats"));
           window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, type: data.type } }));
         } catch (_) {}
@@ -1394,20 +1419,180 @@ function connectSSE(): void {
       } catch (_) {}
     };
 
+    let sseErrorCount = 0;
     evtSource.onerror = () => {
       try { evtSource.close(); } catch (_) {}
       currentEvtSource = null;
+      sseErrorCount++;
       clearTimeout(sseReconnectTimer);
-      // Auto-reconnect after 2 seconds to guarantee stream resilience
+      // On static hosting like Vercel, don't keep hammering failed SSE endpoint
+      if (sseErrorCount > 2) {
+        serverEndpointsAvailable = false;
+        return;
+      }
       sseReconnectTimer = setTimeout(() => {
         connectSSE();
-      }, 2000);
+      }, 3000);
     };
   } catch (_) {
     clearTimeout(sseReconnectTimer);
-    sseReconnectTimer = setTimeout(() => {
-      connectSSE();
-    }, 4000);
+  }
+}
+
+let isSyncingFirestoreDirectly = false;
+let lastFirestoreSyncTimestamp = 0;
+let serverEndpointsAvailable = true;
+
+/**
+ * Direct real-time Firestore synchronizer for static hosting (e.g. Vercel)
+ * and cross-device sync without requiring manual page refresh.
+ */
+export async function syncDirectlyFromFirestore(): Promise<void> {
+  if (isSyncingFirestoreDirectly) return;
+  const now = Date.now();
+  if (now - lastFirestoreSyncTimestamp < 2500) return;
+  
+  isSyncingFirestoreDirectly = true;
+  lastFirestoreSyncTimestamp = now;
+
+  try {
+    const eff = getEffectiveUidAndEmail();
+    const currentUid = eff.uid || "";
+    const currentEmail = (eff.email || "").toLowerCase().trim();
+    if (!currentUid && !currentEmail) return;
+
+    // Fetch active live collections in parallel directly from Firestore
+    const [attSnap, delaySnap, behSnap] = await Promise.all([
+      getDocs(collection(db, ATTENDANCE_COLL)).catch(() => null),
+      getDocs(collection(db, MORNING_DELAYS_COLL)).catch(() => null),
+      getDocs(collection(db, BEHAVIORS_COLL)).catch(() => null),
+    ]);
+
+    // 1. Attendance Reconcile
+    if (attSnap && !attSnap.empty) {
+      const remoteAtt: any[] = [];
+      attSnap.forEach(d => {
+        const data = d.data();
+        if (isDocBelongingToUser(data, currentUid, currentEmail)) {
+          const rawItem = { ...data, id: d.id, _docId: d.id, _origId: (data as any)?.id };
+          if (!isRecordTombstoned(ATTENDANCE_COLL, rawItem)) {
+            remoteAtt.push(sanitizeAttendanceRecord(rawItem));
+          }
+        }
+      });
+
+      const curLocal = getLocalItems(ATTENDANCE_COLL, currentUid);
+      const curMap = new Map(curLocal.map((a: any) => [a.id, a]));
+      let changed = false;
+
+      for (const item of remoteAtt) {
+        if (!isIdDeleted(ATTENDANCE_COLL, item.id)) {
+          const existing = curMap.get(item.id);
+          const remoteTime = (item.updatedAt || item.timestamp || 0);
+          const localTime = existing ? (existing.updatedAt || existing.timestamp || 0) : 0;
+          if (!existing || remoteTime > localTime) {
+            curMap.set(item.id, item);
+            changed = true;
+          }
+        }
+      }
+
+      if (changed) {
+        const merged = Array.from(curMap.values());
+        setLocalItems(ATTENDANCE_COLL, merged, currentUid);
+        notifyCollectionSubscribers(ATTENDANCE_COLL, merged);
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_attendance", { detail: { records: merged, type: "firestore_direct_sync" } }));
+          window.dispatchEvent(new CustomEvent("school_refresh_stats", { detail: { records: merged, type: "firestore_direct_sync" } }));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, type: "firestore_direct_sync" } }));
+        } catch (_) {}
+      }
+    }
+
+    // 2. Delays Reconcile
+    if (delaySnap && !delaySnap.empty) {
+      const remoteDelays: any[] = [];
+      delaySnap.forEach(d => {
+        const data = d.data();
+        if (isDocBelongingToUser(data, currentUid, currentEmail)) {
+          const rawItem = { ...data, id: d.id, _docId: d.id, _origId: (data as any)?.id };
+          if (!isRecordTombstoned(MORNING_DELAYS_COLL, rawItem)) {
+            remoteDelays.push(rawItem);
+          }
+        }
+      });
+
+      const curLocal = getLocalItems(MORNING_DELAYS_COLL, currentUid);
+      const curMap = new Map(curLocal.map((d: any) => [d.id, d]));
+      let changed = false;
+
+      for (const item of remoteDelays) {
+        if (!isIdDeleted(MORNING_DELAYS_COLL, item.id) && !isMorningDelayDeleted(item.date, item.studentId, item.updatedAt)) {
+          const existing = curMap.get(item.id);
+          const remoteTime = (item.updatedAt || item.timestamp || 0);
+          const localTime = existing ? (existing.updatedAt || existing.timestamp || 0) : 0;
+          if (!existing || remoteTime > localTime) {
+            curMap.set(item.id, item);
+            changed = true;
+          }
+        }
+      }
+
+      if (changed) {
+        const merged = Array.from(curMap.values());
+        setLocalItems(MORNING_DELAYS_COLL, merged, currentUid);
+        notifyCollectionSubscribers(MORNING_DELAYS_COLL, merged);
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { records: merged, type: "firestore_direct_sync" } }));
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "firestore_direct_sync" } }));
+        } catch (_) {}
+      }
+    }
+
+    // 3. Behaviors Reconcile
+    if (behSnap && !behSnap.empty) {
+      const remoteBeh: any[] = [];
+      behSnap.forEach(d => {
+        const data = d.data();
+        if (isDocBelongingToUser(data, currentUid, currentEmail)) {
+          const rawItem = { ...data, id: d.id, _docId: d.id, _origId: (data as any)?.id };
+          if (!isRecordTombstoned(BEHAVIORS_COLL, rawItem)) {
+            remoteBeh.push(rawItem);
+          }
+        }
+      });
+
+      const curLocal = getLocalItems(BEHAVIORS_COLL, currentUid);
+      const curMap = new Map(curLocal.map((b: any) => [b.id, b]));
+      let changed = false;
+
+      for (const item of remoteBeh) {
+        if (!isIdDeleted(BEHAVIORS_COLL, item.id)) {
+          const existing = curMap.get(item.id);
+          const remoteTime = (item.updatedAt || item.timestamp || 0);
+          const localTime = existing ? (existing.updatedAt || existing.timestamp || 0) : 0;
+          if (!existing || remoteTime > localTime) {
+            curMap.set(item.id, item);
+            changed = true;
+          }
+        }
+      }
+
+      if (changed) {
+        const merged = Array.from(curMap.values());
+        setLocalItems(BEHAVIORS_COLL, merged, currentUid);
+        notifyCollectionSubscribers(BEHAVIORS_COLL, merged);
+        try {
+          window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+          window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: BEHAVIORS_COLL, type: "firestore_direct_sync" } }));
+        } catch (_) {}
+      }
+    }
+  } catch (err) {
+    console.debug("Firestore direct sync check notice:", err);
+  } finally {
+    isSyncingFirestoreDirectly = false;
   }
 }
 
@@ -1418,6 +1603,10 @@ export function initServerSyncEngine(): void {
   connectSSE();
 
   pollServer = async () => {
+    if (!serverEndpointsAvailable) {
+      await syncDirectlyFromFirestore();
+      return;
+    }
     try {
       const code = getSchoolCode();
       const currentEff = getEffectiveUidAndEmail();
@@ -1429,46 +1618,60 @@ export function initServerSyncEngine(): void {
       // Fast sync delays directly to guarantee 100% instant sync between independent links and control panel
       try {
         const delaysRes = await fetch(`/api/sync/delays?${q.toString()}`);
-        if (delaysRes.ok) {
-          const delaysJson = await delaysRes.json();
-          if (delaysJson.success && Array.isArray(delaysJson.records)) {
-            const valid = delaysJson.records.filter((d: any) =>
-              d && d.id && !isIdDeleted("morning_delays", d.id) && !isMorningDelayDeleted(d.date, d.studentId, d.updatedAt)
-            );
-            const cur = getLocalItems(MORNING_DELAYS_COLL, currentEff.uid);
-            let hasChange = false;
-            const curMap = new Map(cur.map((d: any) => [d.id, d]));
-            // Check for deletions on server
-            if (delaysJson.records.length < cur.length && delaysJson.records.length > 0) {
-              const serverIds = new Set(delaysJson.records.map((d: any) => d.id));
-              cur.forEach((d: any) => {
-                if (d && d.id && !serverIds.has(d.id)) {
-                  curMap.delete(d.id);
-                  hasChange = true;
-                }
-              });
-            }
-            for (const item of valid) {
-              const existing = curMap.get(item.id);
-              if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
-                curMap.set(item.id, item);
+        const cType = delaysRes.headers.get("content-type") || "";
+        if (!delaysRes.ok || !cType.includes("application/json")) {
+          serverEndpointsAvailable = false;
+          await syncDirectlyFromFirestore();
+          return;
+        }
+        const delaysJson = await delaysRes.json();
+        if (delaysJson.success && Array.isArray(delaysJson.records)) {
+          const valid = delaysJson.records.filter((d: any) =>
+            d && d.id && !isIdDeleted("morning_delays", d.id) && !isMorningDelayDeleted(d.date, d.studentId, d.updatedAt)
+          );
+          const cur = getLocalItems(MORNING_DELAYS_COLL, currentEff.uid);
+          let hasChange = false;
+          const curMap = new Map(cur.map((d: any) => [d.id, d]));
+          // Check for deletions on server
+          if (delaysJson.records.length < cur.length && delaysJson.records.length > 0) {
+            const serverIds = new Set(delaysJson.records.map((d: any) => d.id));
+            cur.forEach((d: any) => {
+              if (d && d.id && !serverIds.has(d.id)) {
+                curMap.delete(d.id);
                 hasChange = true;
               }
-            }
-            if (hasChange) {
-              const merged = Array.from(curMap.values());
-              setLocalItems(MORNING_DELAYS_COLL, merged, currentEff.uid);
-              notifyCollectionSubscribers(MORNING_DELAYS_COLL, merged);
-              window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { records: merged, type: "poll_sync" } }));
-              window.dispatchEvent(new CustomEvent("school_refresh_stats"));
-              window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "poll_sync" } }));
+            });
+          }
+          for (const item of valid) {
+            const existing = curMap.get(item.id);
+            if (!existing || (item.updatedAt || 0) > (existing.updatedAt || 0)) {
+              curMap.set(item.id, item);
+              hasChange = true;
             }
           }
+          if (hasChange) {
+            const merged = Array.from(curMap.values());
+            setLocalItems(MORNING_DELAYS_COLL, merged, currentEff.uid);
+            notifyCollectionSubscribers(MORNING_DELAYS_COLL, merged);
+            window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { records: merged, type: "poll_sync" } }));
+            window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+            window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "poll_sync" } }));
+          }
         }
-      } catch (_) {}
+      } catch (_) {
+        serverEndpointsAvailable = false;
+        await syncDirectlyFromFirestore();
+        return;
+      }
 
       const res = await fetch(`/api/sync/all?${q.toString()}`);
       if (res.ok) {
+        const cType = res.headers.get("content-type") || "";
+        if (!cType.includes("application/json")) {
+          serverEndpointsAvailable = false;
+          await syncDirectlyFromFirestore();
+          return;
+        }
         const json = await res.json();
         if (json.success) {
           if (json.schoolCode && typeof window !== "undefined") {
@@ -1656,21 +1859,40 @@ export function initServerSyncEngine(): void {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) {
+      serverEndpointsAvailable = false;
+      await syncDirectlyFromFirestore();
+    }
   };
 
   pollServer();
+  syncDirectlyFromFirestore().catch(() => {});
+
   // 3-second live poll for instantaneous cross-device sync without requiring manual page refresh
   setInterval(() => {
     if (typeof document === "undefined" || !document.hidden) {
-      pollServer();
+      if (serverEndpointsAvailable) {
+        pollServer();
+      } else {
+        syncDirectlyFromFirestore().catch(() => {});
+      }
     }
   }, 3000);
+
   if (typeof window !== "undefined") {
-    window.addEventListener("focus", () => pollServer());
-    window.addEventListener("online", () => pollServer());
+    window.addEventListener("focus", () => {
+      if (serverEndpointsAvailable) pollServer();
+      else syncDirectlyFromFirestore().catch(() => {});
+    });
+    window.addEventListener("online", () => {
+      if (serverEndpointsAvailable) pollServer();
+      else syncDirectlyFromFirestore().catch(() => {});
+    });
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) pollServer();
+      if (!document.hidden) {
+        if (serverEndpointsAvailable) pollServer();
+        else syncDirectlyFromFirestore().catch(() => {});
+      }
     });
   }
 }
@@ -3140,6 +3362,29 @@ export async function saveAttendanceRecord(record: Omit<AttendanceRecord, "id" |
   // 2. Save to local storage cache immediately (0ms)
   saveOrUpdateLocalItem(ATTENDANCE_COLL, fullRecord, uid);
 
+  // Broadcast to other open tabs/windows immediately (0ms)
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "attendance_saved",
+        record: fullRecord,
+        schoolCode: getSchoolCode(),
+        ownerEmail: email,
+        ownerUid: uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  // Dispatch local events so current tab UI components re-render immediately (0ms)
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_attendance", { detail: { record: fullRecord, type: "attendance_saved" } }));
+      window.dispatchEvent(new CustomEvent("school_refresh_stats", { detail: { record: fullRecord, type: "attendance_saved" } }));
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, record: fullRecord, type: "attendance_saved" } }));
+    } catch (_) {}
+  }
+
   // 3. Real-time multi-device server sync (guarantees cross-device sync even if Firestore quota is exceeded)
   postToServerSync("/api/sync/attendance", { record: fullRecord });
 
@@ -3165,6 +3410,14 @@ export async function deleteAttendanceRecord(id: string): Promise<void> {
         ownerUid: eff.uid,
         timestamp: Date.now()
       });
+    } catch (_) {}
+  }
+
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_attendance", { detail: { deletedId: id, deletedIds: [id], type: "attendance_deleted" } }));
+      window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, type: "attendance_deleted" } }));
     } catch (_) {}
   }
 
@@ -3365,6 +3618,27 @@ export async function saveBehaviorRecord(record: Omit<BehaviorRecord, "id" | "ti
 
   // 1. Instant local update (0ms)
   saveOrUpdateLocalItem(BEHAVIORS_COLL, fullRecord, uid);
+
+  // Broadcast to other open tabs/windows immediately (0ms)
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "behavior_saved",
+        record: fullRecord,
+        schoolCode: getSchoolCode(),
+        ownerEmail: email,
+        ownerUid: uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_stats", { detail: { record: fullRecord, type: "behavior_saved" } }));
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: BEHAVIORS_COLL, record: fullRecord, type: "behavior_saved" } }));
+    } catch (_) {}
+  }
 
   // 2. Real-time server sync
   postToServerSync("/api/sync/behaviors", { record: fullRecord });

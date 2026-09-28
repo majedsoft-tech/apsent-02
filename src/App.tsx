@@ -36,7 +36,8 @@ import {
   ensureRegisteredSchoolLoaded,
   isIdDeleted,
   getLocalItems,
-  MORNING_DELAYS_COLL
+  MORNING_DELAYS_COLL,
+  syncDirectlyFromFirestore
 } from "./dbService";
 import { Grade, Class, Teacher, Student } from "./types";
 import TeacherPortal from "./components/TeacherPortal";
@@ -969,6 +970,13 @@ export default function App() {
       setIsRefreshingData(false);
       setLoading(false);
     }
+  };
+
+  const handleFastStatsSync = () => {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+    } catch (_) {}
+    syncDirectlyFromFirestore().catch(() => {});
   };
 
   const buildSharedUrl = (pageValue: string, extraParams: string = "") => {
@@ -2121,7 +2129,7 @@ export default function App() {
                 classes={classes} 
                 teachers={teachers} 
                 students={students}
-                onRefreshStats={handleRefreshData}
+                onRefreshStats={handleFastStatsSync}
                 activeTab={teacherTab}
                 setActiveTab={setTeacherTab}
                 navigateTo={navigateTo}

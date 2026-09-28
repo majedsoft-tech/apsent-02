@@ -39,7 +39,11 @@ import {
   syncAllLocalDataToFirestore,
   isIdDeleted,
   getLocalItems,
-  MORNING_DELAYS_COLL
+  MORNING_DELAYS_COLL,
+  ATTENDANCE_COLL,
+  BEHAVIORS_COLL,
+  getEffectiveUidAndEmail,
+  syncDirectlyFromFirestore
 } from "../dbService";
 import { FirebaseDiagnosticModal } from "./FirebaseDiagnosticModal";
 import { 
@@ -1870,19 +1874,36 @@ export default function AdminPanel({
   };
 
   // Load stats from database
-  const loadStatistics = async () => {
-    setStatsLoading(true);
+  const loadStatistics = async (force: boolean = false) => {
+    if (cachedAttendanceRef.current.length === 0 && cachedDelaysRef.current.length === 0) {
+      setStatsLoading(true);
+    }
     try {
       const [attendance, behaviors, delays] = await Promise.all([
-        getAllAttendanceRecords(true),
-        getAllBehaviorRecords(true),
-        getAllMorningDelayRecords(true)
+        getAllAttendanceRecords(force),
+        getAllBehaviorRecords(force),
+        getAllMorningDelayRecords(force)
       ]);
-      cachedAttendanceRef.current = attendance;
+
+      // Preserve any fresh in-flight items (< 30 seconds old) from local cache
+      const eff = getEffectiveUidAndEmail();
+      const localAtt = getLocalItems(ATTENDANCE_COLL, eff.uid);
+      const safeAttendance = Array.isArray(attendance) ? [...attendance] : [];
+      if (Array.isArray(localAtt)) {
+        const seen = new Set(safeAttendance.map((a: any) => a.id));
+        const now = Date.now();
+        localAtt.forEach((l: any) => {
+          if (l && l.id && !seen.has(l.id) && (now - (l.updatedAt || l.timestamp || 0) < 30000)) {
+            safeAttendance.push(l);
+          }
+        });
+      }
+
+      cachedAttendanceRef.current = safeAttendance;
       cachedBehaviorsRef.current = behaviors;
       cachedDelaysRef.current = delays;
       setMorningDelaysList(delays);
-      computeStatistics(attendance, behaviors, delays, true, selectedAttendanceDate);
+      computeStatistics(safeAttendance, behaviors, delays, true, selectedAttendanceDate);
     } catch (e) {
       console.error("Error loading stats:", e);
     } finally {
@@ -2163,28 +2184,81 @@ export default function AdminPanel({
         }
       );
 
-      const syncLocalDelays = () => {
-        const local = getLocalItems(MORNING_DELAYS_COLL);
-        if (Array.isArray(local) && local.length > 0) {
-          cachedDelaysRef.current = local;
-          setMorningDelaysList(local);
+      const syncLocalData = () => {
+        const eff = getEffectiveUidAndEmail();
+        const localAtt = getLocalItems(ATTENDANCE_COLL, eff.uid);
+        if (Array.isArray(localAtt) && localAtt.length > 0) {
+          cachedAttendanceRef.current = localAtt;
+        }
+        const localDelays = getLocalItems(MORNING_DELAYS_COLL, eff.uid);
+        if (Array.isArray(localDelays) && localDelays.length > 0) {
+          cachedDelaysRef.current = localDelays;
+          setMorningDelaysList(localDelays);
+        }
+        const localBeh = getLocalItems(BEHAVIORS_COLL, eff.uid);
+        if (Array.isArray(localBeh) && localBeh.length > 0) {
+          cachedBehaviorsRef.current = localBeh;
         }
       };
 
-      const handleForceRefresh = () => {
-        syncLocalDelays();
-        loadStatistics();
+      const handleForceRefresh = (e?: any) => {
+        syncLocalData();
+        const detail = e?.detail;
+        if (detail?.records && Array.isArray(detail.records)) {
+          if (detail.type === "firestore_direct_sync" || detail.type === "poll_sync") {
+            if (detail.colName === ATTENDANCE_COLL || detail.records[0]?.period) {
+              cachedAttendanceRef.current = detail.records;
+            }
+          }
+        }
+        runCompute();
       };
 
-      const handleDataSynced = () => {
-        syncLocalDelays();
+      const handleDataSynced = (e?: any) => {
+        syncLocalData();
+        const detail = e?.detail;
+        if (detail?.records && Array.isArray(detail.records)) {
+          if (detail.colName === ATTENDANCE_COLL) {
+            cachedAttendanceRef.current = detail.records;
+          }
+        }
+        runCompute();
+      };
+
+      const handleAttendanceUpdated = (e: any) => {
+        const detail = e?.detail;
+        if (!detail) {
+          syncLocalData();
+          runCompute();
+          return;
+        }
+
+        if (detail.type === "attendance_saved" && detail.record) {
+          const rec = detail.record;
+          if (Array.isArray(cachedAttendanceRef.current)) {
+            let updated = cachedAttendanceRef.current.filter((a: any) => a && a.id !== rec.id);
+            updated.unshift(rec);
+            cachedAttendanceRef.current = updated;
+          }
+        } else if (detail.type === "attendance_deleted") {
+          const delIds = Array.isArray(detail.deletedIds) ? detail.deletedIds : [detail.deletedId].filter(Boolean);
+          if (Array.isArray(cachedAttendanceRef.current)) {
+            cachedAttendanceRef.current = cachedAttendanceRef.current.filter(
+              (a: any) => a && !delIds.includes(a.id) && (!a._docId || !delIds.includes(a._docId))
+            );
+          }
+        } else if (Array.isArray(detail.records)) {
+          cachedAttendanceRef.current = detail.records;
+        } else {
+          syncLocalData();
+        }
         runCompute();
       };
 
       const handleDelaysUpdated = (e: any) => {
         const detail = e?.detail;
         if (!detail) {
-          syncLocalDelays();
+          syncLocalData();
           runCompute();
           return;
         }
@@ -2232,18 +2306,20 @@ export default function AdminPanel({
             return updatedList;
           });
         } else {
-          syncLocalDelays();
+          syncLocalData();
         }
         runCompute();
       };
 
       const handleVisibilityOrFocus = () => {
         if (typeof document === "undefined" || !document.hidden) {
-          syncLocalDelays();
+          syncLocalData();
           runCompute();
+          syncDirectlyFromFirestore().catch(() => {});
         }
       };
 
+      window.addEventListener("school_refresh_attendance", handleAttendanceUpdated);
       window.addEventListener("school_refresh_delays", handleDelaysUpdated);
       window.addEventListener("school_refresh_stats", handleForceRefresh);
       window.addEventListener("school_data_synced", handleDataSynced);
@@ -2256,6 +2332,7 @@ export default function AdminPanel({
         unsubAttendance();
         unsubBehaviors();
         unsubDelays();
+        window.removeEventListener("school_refresh_attendance", handleAttendanceUpdated);
         window.removeEventListener("school_refresh_delays", handleDelaysUpdated);
         window.removeEventListener("school_refresh_stats", handleForceRefresh);
         window.removeEventListener("school_data_synced", handleDataSynced);
