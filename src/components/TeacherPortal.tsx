@@ -784,20 +784,20 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
           </div>
 
           {/* Selected Criteria Info Badge */}
-          <div className="bg-slate-50/95 text-slate-700 border border-slate-200/90 py-2 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2.5 sm:gap-3.5 w-full shadow-3xs">
-            <div className="flex items-center gap-1.5">
-              <span className="text-blue-700 font-black text-xs sm:text-[13px]">صف:</span>
-              <span className="text-blue-900 bg-blue-100/90 border border-blue-200/90 px-2 py-0.5 rounded-lg text-xs sm:text-sm font-black shadow-3xs">{currentGrade || "---"}</span>
+          <div className="bg-slate-50 text-slate-600 border border-slate-150 py-1.5 px-2.5 rounded-xl text-[10px] font-black flex items-center justify-center gap-2 w-full shadow-3xs">
+            <div>
+              <span>صف: </span>
+              <span className="text-slate-900 font-black">{currentGrade || "---"}</span>
             </div>
-            <span className="text-slate-300 font-light select-none">|</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-emerald-700 font-black text-xs sm:text-[13px]">فصل:</span>
-              <span className="text-emerald-900 bg-emerald-100/90 border border-emerald-200/90 px-2 py-0.5 rounded-lg text-xs sm:text-sm font-black shadow-3xs">{currentClass || "---"}</span>
+            <span className="text-slate-300">|</span>
+            <div>
+              <span>فصل: </span>
+              <span className="text-slate-900 font-black">{currentClass || "---"}</span>
             </div>
-            <span className="text-slate-300 font-light select-none">|</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-purple-700 font-black text-xs sm:text-[13px]">حصة:</span>
-              <span className="text-purple-900 bg-purple-100/90 border border-purple-200/90 px-2 py-0.5 rounded-lg text-xs sm:text-sm font-black shadow-3xs">{selectedPeriod}</span>
+            <span className="text-slate-300">|</span>
+            <div>
+              <span>حصة: </span>
+              <span className="text-slate-900 font-black">{selectedPeriod}</span>
             </div>
           </div>
         </div>
