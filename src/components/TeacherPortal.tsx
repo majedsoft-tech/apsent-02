@@ -80,7 +80,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
   // Filter Selection States
   const [selectedTeacherId, setSelectedTeacherId] = useState<string>("");
   const [selectedGradeId, setSelectedGradeId] = useState<string>("");
-  const [selectedPeriod, setSelectedPeriod] = useState<string>("حصة 1");
+  const [selectedPeriod, setSelectedPeriod] = useState<string>("");
   const [selectedClassId, setSelectedClassId] = useState<string>("");
 
   // Refs and dynamic offsets for sticky elements to ensure precise and solid pinning
@@ -184,33 +184,25 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
     };
   }, [grades, filteredClasses, selectedGradeId]);
 
-  // Initialize dropdowns with first elements when data loaded
-  useEffect(() => {
-    if (grades.length > 0 && !selectedGradeId) {
-      setSelectedGradeId(grades[0].id);
-    }
-  }, [grades]);
-
   // Update classes list when grade changes
   useEffect(() => {
     if (selectedGradeId) {
       const filtered = classes.filter(c => c.gradeId === selectedGradeId);
       setFilteredClasses(filtered);
-      if (filtered.length > 0) {
-        // Keep current selected class if it's still valid under the selected grade
-        const isCurrentClassValid = filtered.some(c => c.id === selectedClassId);
-        if (!isCurrentClassValid) {
-          setSelectedClassId(filtered[0].id);
-        }
-      } else {
+      // Keep current selected class only if it's still valid under the selected grade, otherwise reset
+      const isCurrentClassValid = filtered.some(c => c.id === selectedClassId);
+      if (!isCurrentClassValid) {
         setSelectedClassId("");
       }
+    } else {
+      setFilteredClasses([]);
+      setSelectedClassId("");
     }
   }, [selectedGradeId, classes]);
 
   // Keep students in sync when propStudents or grade/class changes
   useEffect(() => {
-    if (!selectedGradeId || !selectedClassId) {
+    if (!selectedGradeId || !selectedClassId || !selectedTeacherId || !selectedPeriod) {
       setStudents([]);
       return;
     }
@@ -221,7 +213,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
         setSelectedStudentId(studentList[0].id);
       }
     }
-  }, [propStudents, selectedGradeId, selectedClassId]);
+  }, [propStudents, selectedGradeId, selectedClassId, selectedTeacherId, selectedPeriod]);
 
   // Fetch Students and existing Attendance record when Class/Period/Date changes (Real-time live-sync!)
   useEffect(() => {
@@ -231,8 +223,9 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
     isDirtyRef.current = false;
 
     async function loadStudents() {
-      if (!selectedGradeId || !selectedClassId) {
+      if (!selectedGradeId || !selectedClassId || !selectedTeacherId || !selectedPeriod) {
         setStudents([]);
+        setAttendanceLoading(false);
         return;
       }
 
@@ -317,7 +310,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
       if (unsubscribe) unsubscribe();
       window.removeEventListener("school_data_synced", handleSync);
     };
-  }, [selectedGradeId, selectedClassId, selectedPeriod, propStudents]);
+  }, [selectedGradeId, selectedClassId, selectedPeriod, selectedTeacherId, propStudents]);
 
   // Fetch behavior records when selected student changes (Real-time live-sync!)
   useEffect(() => {
@@ -614,6 +607,23 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
   const lateCount = isNoAbsence ? 0 : lateStudentIds.length;
   const presentCount = totalStudents - absentCount - lateCount;
 
+  // Sequential Guidance Flags
+  const isTeacherSelected = Boolean(selectedTeacherId);
+  const isPeriodSelected = Boolean(selectedPeriod);
+  const isGradeSelected = Boolean(selectedGradeId);
+  const isClassSelected = Boolean(selectedClassId);
+
+  const isPeriodDisabled = !isTeacherSelected;
+  const isPeriodActive = isTeacherSelected && !isPeriodSelected;
+
+  const isGradeDisabled = !isTeacherSelected || !isPeriodSelected;
+  const isGradeActive = isTeacherSelected && isPeriodSelected && !isGradeSelected;
+
+  const isClassDisabled = !isTeacherSelected || !isPeriodSelected || !isGradeSelected || filteredClasses.length === 0;
+  const isClassActive = isTeacherSelected && isPeriodSelected && isGradeSelected && !isClassSelected && filteredClasses.length > 0;
+
+  const isAllSelected = isTeacherSelected && isPeriodSelected && isGradeSelected && isClassSelected;
+
   return (
     <div className="flex flex-col space-y-4 pb-36">
       {/* Title Header Card */}
@@ -655,9 +665,9 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                   <span>👨‍🏫</span>
                   <span>المعلم</span>
                 </label>
-                {!selectedTeacherId && (
+                {!isTeacherSelected && (
                   <span className="text-amber-600 font-extrabold text-[10px] animate-pulse">
-                    (اختر المعلم)
+                    👇 (اختر المعلم)
                   </span>
                 )}
               </div>
@@ -665,7 +675,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                 value={selectedTeacherId}
                 onChange={(e) => setSelectedTeacherId(e.target.value)}
                 className={`w-full bg-white border-2 rounded-xl px-2.5 py-2 text-xs md:text-sm font-bold transition-all cursor-pointer truncate ${
-                  !selectedTeacherId
+                  !isTeacherSelected
                     ? "border-amber-500 ring-2 ring-amber-400/50 bg-amber-50/60 animate-pulse text-amber-900 shadow-md shadow-amber-500/20"
                     : "border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/30 text-slate-800 shadow-xs"
                 }`}
@@ -688,12 +698,27 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                   <span>⏰</span>
                   <span>الحصة</span>
                 </label>
+                {isPeriodActive && (
+                  <span className="text-amber-600 font-extrabold text-[10px] animate-pulse">
+                    👇 (اختر الحصة)
+                  </span>
+                )}
               </div>
               <select
                 value={selectedPeriod}
                 onChange={(e) => setSelectedPeriod(e.target.value)}
-                className="w-full bg-white border-2 border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/30 rounded-xl px-2.5 py-2 text-xs md:text-sm font-bold text-slate-800 shadow-xs transition-all cursor-pointer truncate"
+                disabled={isPeriodDisabled}
+                className={`w-full bg-white border-2 rounded-xl px-2.5 py-2 text-xs md:text-sm font-bold transition-all truncate ${
+                  isPeriodDisabled
+                    ? "border-slate-200 bg-slate-100/70 text-slate-400 cursor-not-allowed"
+                    : isPeriodActive
+                    ? "border-amber-500 ring-2 ring-amber-400/50 bg-amber-50/60 animate-pulse text-amber-900 shadow-md shadow-amber-500/20 cursor-pointer"
+                    : "border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/30 text-slate-800 shadow-xs cursor-pointer"
+                }`}
               >
+                <option value="" disabled className="text-slate-400 font-bold bg-white">
+                  {isPeriodDisabled ? "⏰ -- اختر المعلم أولاً --" : "⏰ -- اختر الحصة --"}
+                </option>
                 {PERIODS.map(p => (
                   <option key={p} value={p} className="text-slate-800 font-bold bg-white">
                     {p}
@@ -712,6 +737,11 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                   <span>🏫</span>
                   <span>الصف</span>
                 </label>
+                {isGradeActive && (
+                  <span className="text-amber-600 font-extrabold text-[10px] animate-pulse">
+                    👇 (اختر الصف)
+                  </span>
+                )}
               </div>
               <select
                 value={selectedGradeId}
@@ -719,16 +749,25 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                   const newGradeId = e.target.value;
                   setSelectedGradeId(newGradeId);
                   const gradeClasses = classes.filter(c => c.gradeId === newGradeId);
-                  if (gradeClasses.length > 0 && !gradeClasses.some(c => c.id === selectedClassId)) {
-                    setSelectedClassId(gradeClasses[0].id);
-                  } else if (gradeClasses.length === 0) {
+                  if (gradeClasses.length > 0 && gradeClasses.some(c => c.id === selectedClassId)) {
+                    // keep
+                  } else {
                     setSelectedClassId("");
                   }
                 }}
-                className="w-full bg-white border-2 border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/30 rounded-xl px-2.5 py-2 text-xs md:text-sm font-bold text-slate-800 shadow-xs transition-all cursor-pointer truncate"
+                disabled={isGradeDisabled}
+                className={`w-full bg-white border-2 rounded-xl px-2.5 py-2 text-xs md:text-sm font-bold transition-all truncate ${
+                  isGradeDisabled
+                    ? "border-slate-200 bg-slate-100/70 text-slate-400 cursor-not-allowed"
+                    : isGradeActive
+                    ? "border-amber-500 ring-2 ring-amber-400/50 bg-amber-50/60 animate-pulse text-amber-900 shadow-md shadow-amber-500/20 cursor-pointer"
+                    : "border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/30 text-slate-800 shadow-xs cursor-pointer"
+                }`}
               >
                 <option value="" disabled className="text-slate-400 font-bold bg-white">
-                  🏫 -- اختر الصف --
+                  {isGradeDisabled
+                    ? (!isTeacherSelected ? "🏫 -- اختر المعلم أولاً --" : "🏫 -- اختر الحصة أولاً --")
+                    : "🏫 -- اختر الصف --"}
                 </option>
                 {grades.map((g, idx) => (
                   <option key={`${g.id}-${idx}`} value={g.id} className="text-slate-800 font-bold bg-white">
@@ -745,28 +784,36 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                   <span>🚪</span>
                   <span>الفصل</span>
                 </label>
+                {isClassActive && (
+                  <span className="text-amber-600 font-extrabold text-[10px] animate-pulse">
+                    👇 (اختر الفصل)
+                  </span>
+                )}
               </div>
               <select
                 value={selectedClassId}
                 onChange={(e) => setSelectedClassId(e.target.value)}
-                disabled={filteredClasses.length === 0}
-                className={`w-full bg-white border-2 rounded-xl px-2.5 py-2 text-xs md:text-sm font-bold transition-all cursor-pointer truncate ${
-                  filteredClasses.length === 0
-                    ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
-                    : "border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/30 text-slate-800 shadow-xs"
+                disabled={isClassDisabled}
+                className={`w-full bg-white border-2 rounded-xl px-2.5 py-2 text-xs md:text-sm font-bold transition-all truncate ${
+                  isClassDisabled
+                    ? "border-slate-200 bg-slate-100/70 text-slate-400 cursor-not-allowed"
+                    : isClassActive
+                    ? "border-amber-500 ring-2 ring-amber-400/50 bg-amber-50/60 animate-pulse text-amber-900 shadow-md shadow-amber-500/20 cursor-pointer"
+                    : "border-indigo-400 hover:border-indigo-500 focus:border-indigo-600 focus:ring-2 focus:ring-indigo-500/30 text-slate-800 shadow-xs cursor-pointer"
                 }`}
               >
-                {filteredClasses.length === 0 ? (
-                  <option value="" disabled className="text-slate-400 font-bold bg-white">
-                    لا توجد فصول
+                <option value="" disabled className="text-slate-400 font-bold bg-white">
+                  {!isGradeSelected
+                    ? "🚪 -- اختر الصف أولاً --"
+                    : filteredClasses.length === 0
+                    ? "لا توجد فصول تابعة لهذا الصف"
+                    : "🚪 -- اختر الفصل --"}
+                </option>
+                {filteredClasses.map((c, idx) => (
+                  <option key={`${c.id}-${idx}`} value={c.id} className="text-slate-800 font-bold bg-white">
+                    {c.name}
                   </option>
-                ) : (
-                  filteredClasses.map((c, idx) => (
-                    <option key={`${c.id}-${idx}`} value={c.id} className="text-slate-800 font-bold bg-white">
-                      {c.name}
-                    </option>
-                  ))
-                )}
+                ))}
               </select>
             </div>
           </div>
@@ -787,71 +834,104 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
       {/* UNIFIED STUDENT LIST CARD */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col mb-24 overflow-hidden">
-        {/* Header Banner */}
-        <div className="bg-gradient-to-r from-blue-50 to-indigo-50/60 p-4 border-b border-slate-200/80 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse"></span>
-            <span className="text-sm font-black text-slate-800">رصد الحضور والغياب اليومي</span>
-          </div>
-          <span className="text-2xs font-extrabold text-blue-700 bg-blue-100/70 px-2.5 py-1 rounded-full border border-blue-200">
-            الحصة: {selectedPeriod}
-          </span>
-        </div>
-
         {/* TAB CONTENT: ATTENDANCE */}
         <div className="flex flex-col">
           {/* Students Attendance List Sub-Header */}
-            <div className="bg-slate-50/50 border-b border-slate-100 px-4 py-3 flex flex-wrap gap-3 justify-between items-center text-right">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-xs font-black text-slate-700">قائمة الطلاب ({students.length})</span>
-                <span className="text-[10px] font-bold text-slate-400">اضغط على اسم الطالب لتغيير حالته</span>
-              </div>
-              
-              <div className="flex items-center gap-2 flex-1 min-w-[220px] sm:flex-initial w-full">
-                <button
-                  type="button"
-                  onClick={handleSelectAllPresent}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg text-xs md:text-sm font-bold border transition-all duration-200 cursor-pointer shadow-3xs ${
-                    isAllPresentChecked
-                      ? "bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 font-extrabold"
-                      : "bg-emerald-50 hover:bg-emerald-100/90 text-emerald-800 border-emerald-200"
-                  }`}
-                >
-                  <div className={`w-4 h-4 border rounded flex items-center justify-center text-[10px] font-black transition-all ${
-                    isAllPresentChecked
-                      ? "bg-white border-white text-emerald-600"
-                      : "bg-white border-emerald-400 text-transparent"
-                  }`}>
-                    ✓
-                  </div>
-                  <span>حضور الجميع</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSelectAllAbsent}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg text-xs md:text-sm font-bold border transition-all duration-200 cursor-pointer shadow-3xs ${
-                    isAllAbsentChecked
-                      ? "bg-rose-600 text-white border-rose-600 hover:bg-rose-700 font-extrabold"
-                      : "bg-rose-50 hover:bg-rose-100/90 text-rose-800 border-rose-200"
-                  }`}
-                >
-                  <div className={`w-4 h-4 border rounded flex items-center justify-center text-[10px] font-black transition-all ${
-                    isAllAbsentChecked
-                      ? "bg-white border-white text-rose-600"
-                      : "bg-white border-rose-400 text-transparent"
-                  }`}>
-                    ✓
-                  </div>
-                  <span>غياب الجميع</span>
-                </button>
-              </div>
+          <div className="bg-slate-50/50 border-b border-slate-100 px-4 py-3 flex flex-wrap gap-3 justify-between items-center text-right">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs font-black text-slate-700">قائمة الطلاب ({students.length})</span>
+              <span className="text-[10px] font-bold text-slate-400">
+                {isAllSelected ? "اضغط على اسم الطالب لتغيير حالته" : "أكمل اختيار القوائم المنسدلة أعلاه لبدء الرصد"}
+              </span>
             </div>
+            
+            <div className="flex items-center gap-2 flex-1 min-w-[220px] sm:flex-initial w-full">
+              <button
+                type="button"
+                onClick={handleSelectAllPresent}
+                disabled={!isAllSelected || students.length === 0}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg text-xs md:text-sm font-bold border transition-all duration-200 shadow-3xs ${
+                  !isAllSelected || students.length === 0
+                    ? "opacity-50 cursor-not-allowed bg-slate-100 text-slate-400 border-slate-200"
+                    : isAllPresentChecked
+                    ? "bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 font-extrabold cursor-pointer"
+                    : "bg-emerald-50 hover:bg-emerald-100/90 text-emerald-800 border-emerald-200 cursor-pointer"
+                }`}
+              >
+                <div className={`w-4 h-4 border rounded flex items-center justify-center text-[10px] font-black transition-all ${
+                  isAllPresentChecked
+                    ? "bg-white border-white text-emerald-600"
+                    : "bg-white border-emerald-400 text-transparent"
+                }`}>
+                  ✓
+                </div>
+                <span>حضور الجميع</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSelectAllAbsent}
+                disabled={!isAllSelected || students.length === 0}
+                className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-lg text-xs md:text-sm font-bold border transition-all duration-200 shadow-3xs ${
+                  !isAllSelected || students.length === 0
+                    ? "opacity-50 cursor-not-allowed bg-slate-100 text-slate-400 border-slate-200"
+                    : isAllAbsentChecked
+                    ? "bg-rose-600 text-white border-rose-600 hover:bg-rose-700 font-extrabold cursor-pointer"
+                    : "bg-rose-50 hover:bg-rose-100/90 text-rose-800 border-rose-200 cursor-pointer"
+                }`}
+              >
+                <div className={`w-4 h-4 border rounded flex items-center justify-center text-[10px] font-black transition-all ${
+                  isAllAbsentChecked
+                    ? "bg-white border-white text-rose-600"
+                    : "bg-white border-rose-400 text-transparent"
+                }`}>
+                  ✓
+                </div>
+                <span>غياب الجميع</span>
+              </button>
+            </div>
+          </div>
 
-            {attendanceLoading ? (
-              <div className="p-8 text-center text-slate-500 text-sm">جاري تحميل قائمة الطلاب...</div>
-            ) : students.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 text-sm">لا يوجد طلاب مسجلين في هذا الفصل.</div>
-            ) : (
+          {attendanceLoading ? (
+            <div className="p-8 text-center text-slate-500 text-sm">جاري تحميل قائمة الطلاب...</div>
+          ) : !isAllSelected ? (
+            <div className="p-8 sm:p-12 text-center text-slate-500 flex flex-col items-center justify-center gap-2.5">
+              {!isTeacherSelected ? (
+                <>
+                  <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-2xl shadow-inner animate-pulse">
+                    👨‍🏫
+                  </div>
+                  <span className="text-sm sm:text-base font-black text-slate-700">الرجاء اختيار اسم المعلم أولاً</span>
+                  <span className="text-xs text-slate-400 font-bold">اتبع القوائم المنسدلة أعلاه بالتسلسل لبدء رصد الغياب</span>
+                </>
+              ) : !isPeriodSelected ? (
+                <>
+                  <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-2xl shadow-inner animate-pulse">
+                    ⏰
+                  </div>
+                  <span className="text-sm sm:text-base font-black text-slate-700">الرجاء اختيار الحصة</span>
+                  <span className="text-xs text-slate-400 font-bold">حدد الحصة من القائمة أعلاه لمتابعة الرصد</span>
+                </>
+              ) : !isGradeSelected ? (
+                <>
+                  <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-2xl shadow-inner animate-pulse">
+                    🏫
+                  </div>
+                  <span className="text-sm sm:text-base font-black text-slate-700">الرجاء اختيار الصف الدراسي</span>
+                  <span className="text-xs text-slate-400 font-bold">حدد الصف الدراسي من القائمة أعلاه</span>
+                </>
+              ) : (
+                <>
+                  <div className="w-14 h-14 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-2xl shadow-inner animate-pulse">
+                    🚪
+                  </div>
+                  <span className="text-sm sm:text-base font-black text-slate-700">الرجاء اختيار الفصل الدراسي</span>
+                  <span className="text-xs text-slate-400 font-bold">حدد الفصل الدراسي لعرض قائمة الطلاب ورصد الغياب</span>
+                </>
+              )}
+            </div>
+          ) : students.length === 0 ? (
+            <div className="p-8 text-center text-slate-400 text-sm">لا يوجد طلاب مسجلين في هذا الفصل.</div>
+          ) : (
               <div className="divide-y divide-slate-100">
                 {students.map((student, idx) => {
                   const isPresent = presentStudentIds.includes(student.id);
