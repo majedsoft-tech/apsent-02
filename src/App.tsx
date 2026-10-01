@@ -390,17 +390,45 @@ export default function App() {
     localStorage.setItem("sidebar_open", String(isSidebarOpen));
   }, [isSidebarOpen]);
 
-  // Time formatting for header
+  // Time formatting for header & Automatic Midnight Rollover Watcher (1-second precision)
   const [currentTime, setCurrentTime] = useState<string>("");
 
   useEffect(() => {
-    const updateTime = () => {
+    let lastDate = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
+
+    const updateTimeAndCheckMidnight = () => {
       const now = new Date();
       setCurrentTime(now.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit" }));
+
+      // Check for midnight 12:00 AM date rollover
+      const currentDate = now.toLocaleDateString("en-CA");
+      if (currentDate !== lastDate) {
+        lastDate = currentDate;
+        try {
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem("teacher_unsaved_draft");
+            window.location.reload();
+          }
+        } catch (_) {}
+      }
     };
-    updateTime();
-    const interval = setInterval(updateTime, 60000);
-    return () => clearInterval(interval);
+
+    updateTimeAndCheckMidnight();
+    const interval = setInterval(updateTimeAndCheckMidnight, 1000);
+
+    const onVisibility = () => {
+      if (!document.hidden) {
+        updateTimeAndCheckMidnight();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onVisibility);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onVisibility);
+    };
   }, []);
 
   const appModeRef = React.useRef(appMode);

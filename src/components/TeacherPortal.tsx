@@ -229,7 +229,9 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
         return;
       }
 
-      setAttendanceLoading(true);
+      if (students.length === 0) {
+        setAttendanceLoading(true);
+      }
       try {
         let studentList: Student[] = [];
         if (propStudents && propStudents.length > 0) {

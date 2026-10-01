@@ -970,6 +970,16 @@ if (typeof window !== "undefined" && typeof BroadcastChannel !== "undefined") {
 
       if (!isMatch) return;
 
+      if (data.type === "NEW_DAY_TRANSITION") {
+        try {
+          if (typeof window !== "undefined") {
+            sessionStorage.removeItem("teacher_unsaved_draft");
+            window.location.reload();
+          }
+        } catch (_) {}
+        return;
+      }
+
       if (data.type === "school_name_updated") {
         const newName = (data.schoolName || "").trim();
         if (newName) {
@@ -1868,7 +1878,7 @@ export function initServerSyncEngine(): void {
   pollServer();
   syncDirectlyFromFirestore().catch(() => {});
 
-  // 3-second live poll for instantaneous cross-device sync without requiring manual page refresh
+  // 1-second live poll for instantaneous seamless background sync across the entire site without the user noticing
   setInterval(() => {
     if (typeof document === "undefined" || !document.hidden) {
       if (serverEndpointsAvailable) {
@@ -1877,19 +1887,52 @@ export function initServerSyncEngine(): void {
         syncDirectlyFromFirestore().catch(() => {});
       }
     }
-  }, 3000);
+  }, 1000);
+
+  // Midnight / New Day Watcher: Automatically detects when a new day starts after 12:00 AM midnight
+  // and mandatorily reloads all pages across the site to start fresh attendance for the new day
+  let activeSystemCalendarDay = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
+
+  const checkMidnightNewDayTransition = () => {
+    const currentCalendarDay = new Date().toLocaleDateString("en-CA");
+    if (currentCalendarDay !== activeSystemCalendarDay) {
+      activeSystemCalendarDay = currentCalendarDay;
+      // Broadcast to all other open tabs/windows
+      try {
+        if (realTimeSyncChannel) {
+          realTimeSyncChannel.postMessage({
+            type: "NEW_DAY_TRANSITION",
+            newDate: currentCalendarDay
+          });
+        }
+      } catch (_) {}
+      // Clear yesterday's temporary unsaved drafts
+      try {
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem("teacher_unsaved_draft");
+          window.location.reload();
+        }
+      } catch (_) {}
+    }
+  };
+
+  // Check every second for midnight rollover
+  setInterval(checkMidnightNewDayTransition, 1000);
 
   if (typeof window !== "undefined") {
     window.addEventListener("focus", () => {
+      checkMidnightNewDayTransition();
       if (serverEndpointsAvailable) pollServer();
       else syncDirectlyFromFirestore().catch(() => {});
     });
     window.addEventListener("online", () => {
+      checkMidnightNewDayTransition();
       if (serverEndpointsAvailable) pollServer();
       else syncDirectlyFromFirestore().catch(() => {});
     });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
+        checkMidnightNewDayTransition();
         if (serverEndpointsAvailable) pollServer();
         else syncDirectlyFromFirestore().catch(() => {});
       }
