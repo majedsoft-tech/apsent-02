@@ -124,38 +124,36 @@ export default function ShareLinksModal({
             </button>
           </div>
 
-          {/* 2. Morning Delay Link (معطل حالياً - قريباً) */}
-          <div className="bg-amber-50/50 border border-amber-200/80 rounded-2xl p-3.5 space-y-2.5 opacity-85">
+          {/* 2. Morning Delay Link */}
+          <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-3.5 space-y-2.5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-amber-500/80 text-white flex items-center justify-center font-bold">
+                <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold">
                   <Clock className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-1.5">
-                    <h4 className="text-xs font-black text-amber-950">رابط تسجيل التأخر الصباحي</h4>
-                    <span className="bg-amber-200 text-amber-900 text-[9px] font-black px-1.5 py-0.5 rounded-md border border-amber-300">
-                      قريباً
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-amber-700 font-bold">لمشرفي الطابور والبوابة الصباحية (معطل حالياً - قيد التطوير)</p>
+                  <h4 className="text-xs font-black text-amber-950">رابط تسجيل التأخر الصباحي</h4>
+                  <p className="text-[10px] text-amber-700 font-bold">لمشرفي الطابور والبوابة الصباحية</p>
                 </div>
               </div>
             </div>
 
             <button
               type="button"
-              disabled={true}
-              title="رابط تسجيل التأخر الصباحي معطل حالياً - قريباً"
-              className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 border border-amber-200/60 text-slate-400 rounded-xl text-xs font-black cursor-not-allowed select-none"
+              onClick={onCopyDelayLink}
+              className="w-full flex items-center justify-between px-3 py-2 bg-white hover:bg-amber-100/50 border border-amber-300 text-amber-900 rounded-xl text-xs font-black transition shadow-3xs cursor-pointer"
             >
               <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-slate-400" />
-                <span>رابط التأخر الصباحي</span>
+                <Copy className="w-4 h-4 text-amber-600" />
+                <span>نسخ الرابط المباشر لمشرف التأخر</span>
               </div>
-              <span className="text-[10px] bg-amber-100 text-amber-800 font-black px-2 py-0.5 rounded-md border border-amber-200">
-                قريباً
-              </span>
+              {delayCopied ? (
+                <span className="text-emerald-600 flex items-center gap-1 text-[11px] font-black">
+                  <Check className="w-3.5 h-3.5" /> تم النسخ
+                </span>
+              ) : (
+                <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+              )}
             </button>
           </div>
 

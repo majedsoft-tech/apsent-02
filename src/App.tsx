@@ -1864,42 +1864,54 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* Morning Delay Registration Portal Card (بوابة تسجيل التأخر الصباحي - معطلة حالياً قريباً) */}
+                            {/* Morning Delay Registration Portal Card (بوابة تسجيل التأخر الصباحي - مفعّلة) */}
                             <div 
                               id="sidebar-morning-delay-portal-container"
-                              className="bg-amber-50/40 rounded-xl p-2 border-2 border-amber-300/50 shadow-3xs space-y-2 relative overflow-hidden mt-2 opacity-85"
+                              className="bg-amber-50/70 hover:bg-amber-50 rounded-xl p-2 border-2 border-amber-400/80 shadow-3xs space-y-2 relative overflow-hidden mt-2 transition-all"
                             >
-                              <div className="absolute top-0 right-0 h-full w-1 bg-amber-400"></div>
+                              <div className="absolute top-0 right-0 h-full w-1 bg-amber-500"></div>
                               <button
                                 type="button"
-                                disabled={true}
-                                title="قسم تسجيل التأخر الصباحي معطل حالياً - قريباً"
-                                className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black text-slate-500 bg-amber-100/40 cursor-not-allowed select-none"
+                                onClick={() => {
+                                  navigateTo("morning-delay");
+                                }}
+                                title="الانتقال إلى بوابة تسجيل التأخر الصباحي للطابور"
+                                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-black transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer ${
+                                  appMode === "morning-delay"
+                                    ? "bg-amber-600 text-white shadow-md shadow-amber-600/20"
+                                    : "text-slate-800 hover:bg-amber-100/70 hover:text-amber-950"
+                                }`}
                               >
                                 <div className="flex items-center gap-2">
-                                  <span className="text-amber-600/70"><Clock className="w-4 h-4" /></span>
+                                  <span className={appMode === "morning-delay" ? "text-white" : "text-amber-600"}><Clock className="w-4 h-4" /></span>
                                   <span>بوابة تسجيل التأخر الصباحي</span>
                                 </div>
-                                <span className="px-1.5 py-0.5 text-[9px] font-black bg-amber-200 text-amber-900 rounded-md border border-amber-300/80 shadow-3xs">
-                                  قريباً
-                                </span>
+                                {appMode === "morning-delay" && (
+                                  <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
+                                )}
                               </button>
                               
                               <div className="px-1">
                                 <button
                                   type="button"
                                   id="btn-copy-morning-delay-link"
-                                  disabled={true}
-                                  title="رابط تسجيل التأخر الصباحي معطل حالياً - قريباً"
-                                  className="w-full flex items-center justify-between gap-1 text-[10px] text-slate-500 font-extrabold bg-white/80 border border-amber-200/60 rounded-md px-2.5 py-1.5 cursor-not-allowed select-none opacity-80"
+                                  onClick={() => {
+                                    handleCopyMorningDelayLink();
+                                  }}
+                                  title="نسخ رابط تسجيل التأخر الصباحي لمشاركته مع المشرف مباشرة"
+                                  className="w-full flex items-center justify-between gap-1 text-[10px] text-amber-800 hover:text-amber-950 font-extrabold bg-white hover:bg-amber-50 border border-amber-200/80 rounded-md px-2.5 py-1.5 transition-all duration-200 transform hover:translate-x-[-3px] cursor-pointer shadow-3xs"
                                 >
                                   <div className="flex items-center gap-1.5">
-                                    <Clock className="w-3.5 h-3.5 text-amber-500/70" />
-                                    <span>رابط مشرف التأخر</span>
+                                    <Copy className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                                    <span>نسخ رابط مشرف التأخر</span>
                                   </div>
-                                  <span className="px-1.5 py-0.5 text-[9px] font-black bg-amber-100 text-amber-800 rounded border border-amber-200/80">
-                                    قريباً
-                                  </span>
+                                  {morningDelayCopied ? (
+                                    <span className="text-emerald-600 flex items-center gap-0.5 text-[9px] font-black">
+                                      <Check className="w-3 h-3 animate-bounce" /> تم النسخ
+                                    </span>
+                                  ) : (
+                                    <ExternalLink className="w-3 h-3 text-slate-400" />
+                                  )}
                                 </button>
                               </div>
                             </div>

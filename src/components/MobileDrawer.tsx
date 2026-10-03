@@ -127,17 +127,21 @@ export default function MobileDrawer({
 
               <button
                 type="button"
-                disabled={true}
-                title="رابط تسجيل التأخر الصباحي معطل حالياً - قريباً"
-                className="w-full flex items-center justify-between p-2.5 bg-amber-50/60 border border-amber-200/80 rounded-xl text-xs font-black text-slate-500 cursor-not-allowed select-none opacity-80"
+                onClick={onCopyDelayLink}
+                className="w-full flex items-center justify-between p-2.5 bg-amber-50 hover:bg-amber-100/70 border border-amber-200 rounded-xl text-xs font-black text-amber-950 transition cursor-pointer"
+                title="نسخ رابط بوابة تسجيل التأخر الصباحي"
               >
                 <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-600/70" />
+                  <Clock className="w-4 h-4 text-amber-600" />
                   <span>رابط التأخر الصباحي</span>
                 </div>
-                <span className="text-[10px] bg-amber-200 text-amber-900 font-black px-1.5 py-0.5 rounded border border-amber-300">
-                  قريباً
-                </span>
+                {delayCopied ? (
+                  <span className="text-emerald-600 flex items-center gap-1 text-[10px]">
+                    <Check className="w-3 h-3" /> تم النسخ
+                  </span>
+                ) : (
+                  <Copy className="w-3.5 h-3.5 text-amber-500" />
+                )}
               </button>
           </div>
 
@@ -182,20 +186,26 @@ export default function MobileDrawer({
                 <span>بوابة المعلمين - غياب الحصص</span>
               </button>
 
-              {/* Morning Delay (معطل حالياً - قريباً) */}
+              {/* Morning Delay */}
               <button
                 type="button"
-                disabled={true}
-                title="قسم تسجيل التأخر الصباحي معطل حالياً - قريباً"
-                className="w-full flex items-center justify-between p-3 rounded-xl text-xs font-black cursor-not-allowed opacity-60 bg-slate-50 text-slate-400 select-none"
+                onClick={() => {
+                  onNavigate("morning-delay");
+                  onClose();
+                }}
+                className={`w-full flex items-center justify-between p-3 rounded-xl text-xs font-black transition cursor-pointer ${
+                  appMode === "morning-delay"
+                    ? "bg-amber-600 text-white shadow-md shadow-amber-500/20"
+                    : "bg-slate-50 hover:bg-amber-50 text-slate-800 hover:text-amber-950"
+                }`}
               >
                 <div className="flex items-center gap-3">
-                  <Clock className="w-4 h-4 text-slate-400" />
+                  <Clock className={`w-4 h-4 ${appMode === "morning-delay" ? "text-white" : "text-amber-600"}`} />
                   <span>بوابة التأخر الصباحي للطابور</span>
                 </div>
-                <span className="text-[10px] bg-amber-100 text-amber-800 font-black px-2 py-0.5 rounded-md border border-amber-200">
-                  قريباً
-                </span>
+                {appMode === "morning-delay" && (
+                  <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
+                )}
               </button>
 
               {/* Grades & Classes */}

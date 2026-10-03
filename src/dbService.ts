@@ -5026,6 +5026,197 @@ export function subscribeToAllBehaviorRecords(callback: (records: BehaviorRecord
   }, onError);
 }
 
+// --- SETTINGS & CLEAR DATA OPERATIONS ---
+export interface ClearAttendanceOptions {
+  mode: "all" | "date" | "grade" | "class";
+  date?: string;
+  gradeId?: string;
+  classId?: string;
+}
+
+export async function clearAttendanceRecords(options: ClearAttendanceOptions, studentsList?: Student[]): Promise<number> {
+  const records = await getAllAttendanceRecords(true);
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid || "school_admin";
+
+  const toDelete = records.filter(rec => {
+    if (!rec) return false;
+    if (options.mode === "all") return true;
+    if (options.mode === "date") return rec.date === options.date;
+    if (options.mode === "grade") {
+      if (rec.gradeId === options.gradeId) return true;
+      if (studentsList && options.gradeId && Array.isArray(rec.absent) && rec.absent.length > 0) {
+        return rec.absent.some(stId => {
+          const st = studentsList.find(s => s && (s.id === stId || s.name === stId));
+          return st && st.gradeId === options.gradeId;
+        });
+      }
+      return false;
+    }
+    if (options.mode === "class") {
+      if (rec.classId === options.classId) return true;
+      if (studentsList && options.classId && Array.isArray(rec.absent) && rec.absent.length > 0) {
+        return rec.absent.some(stId => {
+          const st = studentsList.find(s => s && (s.id === stId || s.name === stId));
+          return st && st.classId === options.classId;
+        });
+      }
+      return false;
+    }
+    return false;
+  });
+
+  const ids = toDelete.map(r => r.id).filter(Boolean);
+  if (ids.length === 0) return 0;
+
+  // 1. Permanent tombstones
+  ids.forEach(id => recordDeletedId(ATTENDANCE_COLL, id));
+
+  // 2. Remove from local items (0ms immediate UI reflection)
+  const idSet = new Set(ids);
+  removeLocalItemsBy(ATTENDANCE_COLL, (r) => idSet.has(r.id) || idSet.has(r._docId) || idSet.has(r._origId), uid);
+
+  // 3. Multi-window / tab broadcast
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "attendance_deleted",
+        deletedIds: ids,
+        schoolCode: getSchoolCode(),
+        ownerEmail: eff.email,
+        ownerUid: eff.uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  // 4. Dispatch local events
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_attendance", { detail: { deletedIds: ids, type: "attendance_deleted" } }));
+      window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: ATTENDANCE_COLL, type: "attendance_deleted" } }));
+    } catch (_) {}
+  }
+
+  // 5. Multi-device server sync
+  postToServerSync("/api/sync/attendance", { deletedIds: ids });
+
+  // 6. Firestore batch delete
+  try {
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const batch = writeBatch(db);
+      chunk.forEach(id => {
+        batch.delete(doc(db, ATTENDANCE_COLL, id));
+      });
+      await safeFirestoreWrite(batch.commit(), 8000);
+    }
+  } catch (err) {
+    console.error("Error batch deleting attendance in Firestore:", err);
+  }
+
+  return ids.length;
+}
+
+export interface ClearMorningDelayOptions {
+  mode: "all" | "date" | "grade" | "class";
+  date?: string;
+  gradeId?: string;
+  classId?: string;
+}
+
+export async function clearMorningDelayRecords(options: ClearMorningDelayOptions, studentsList?: Student[]): Promise<number> {
+  const delays = await getAllMorningDelayRecords(true);
+  const eff = getEffectiveUidAndEmail();
+  const uid = eff.uid || "school_admin";
+
+  const toDelete = delays.filter(d => {
+    if (!d) return false;
+    if (options.mode === "all") return true;
+    if (options.mode === "date") return d.date === options.date;
+    if (options.mode === "grade") {
+      if (d.gradeId === options.gradeId) return true;
+      if (studentsList && options.gradeId) {
+        const st = studentsList.find(s => s && (s.id === d.studentId || s.name === d.studentId || s.name === d.studentName));
+        if (st && st.gradeId === options.gradeId) return true;
+      }
+      return false;
+    }
+    if (options.mode === "class") {
+      if (d.classId === options.classId) return true;
+      if (studentsList && options.classId) {
+        const st = studentsList.find(s => s && (s.id === d.studentId || s.name === d.studentId || s.name === d.studentName));
+        if (st && st.classId === options.classId) return true;
+      }
+      return false;
+    }
+    return false;
+  });
+
+  const ids = toDelete.map(d => d.id).filter(Boolean);
+  if (ids.length === 0) return 0;
+
+  // 1. Permanent tombstones
+  ids.forEach(id => recordDeletedId(MORNING_DELAYS_COLL, id));
+  toDelete.forEach(d => {
+    if (d.date && d.studentId) {
+      recordDeletedMorningDelay(d.date, d.studentId);
+      recordDeletedId(MORNING_DELAYS_COLL, `delay_${d.date}_${d.studentId}`);
+    }
+  });
+
+  // 2. Remove from local items (0ms immediate UI reflection)
+  const idSet = new Set(ids);
+  removeLocalItemsBy(MORNING_DELAYS_COLL, (item) => {
+    if (idSet.has(item.id)) return true;
+    if (toDelete.some(d => d.date && d.studentId && item.studentId === d.studentId && item.date === d.date)) return true;
+    return false;
+  }, uid);
+
+  // 3. Multi-window / tab broadcast
+  if (realTimeSyncChannel) {
+    try {
+      realTimeSyncChannel.postMessage({
+        type: "morning_delays_deleted",
+        deletedIds: ids,
+        schoolCode: getSchoolCode(),
+        ownerEmail: eff.email,
+        ownerUid: eff.uid,
+        timestamp: Date.now()
+      });
+    } catch (_) {}
+  }
+
+  // 4. Dispatch local events
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new CustomEvent("school_refresh_delays", { detail: { deletedIds: ids } }));
+      window.dispatchEvent(new CustomEvent("school_refresh_stats"));
+      window.dispatchEvent(new CustomEvent("school_data_synced", { detail: { colName: MORNING_DELAYS_COLL, type: "delay_deleted" } }));
+    } catch (_) {}
+  }
+
+  // 5. Multi-device server sync
+  postToServerSync("/api/sync/morning_delays", { deletedIds: ids });
+
+  // 6. Firestore batch delete
+  try {
+    for (let i = 0; i < ids.length; i += 400) {
+      const chunk = ids.slice(i, i + 400);
+      const batch = writeBatch(db);
+      chunk.forEach(id => {
+        batch.delete(doc(db, MORNING_DELAYS_COLL, id));
+      });
+      await safeFirestoreWrite(batch.commit(), 8000);
+    }
+  } catch (err) {
+    console.error("Error batch deleting morning delays in Firestore:", err);
+  }
+
+  return ids.length;
+}
+
 // --- DATABASE AUTO-SEEDING ---
 export async function seedDatabaseIfEmpty(): Promise<boolean> {
   return false;

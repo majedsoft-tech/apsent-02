@@ -1084,6 +1084,48 @@ export default function AdminPanel({
     );
   };
 
+  // Helper to accurately calculate cumulative absences count for any student
+  const getStudentTotalAbsences = (studentId?: string, studentName?: string): { count: number; daysCount: number } => {
+    const rawId = (studentId || "").trim();
+    const rawName = (studentName || "").trim();
+    const normName = normalizeArabic(rawName).replace(/\s+/g, ' ');
+
+    let matchedStudentId = rawId;
+    if (!matchedStudentId && normName) {
+      const found = students.find(s => s && normalizeArabic(s.name || "").replace(/\s+/g, ' ') === normName);
+      if (found) matchedStudentId = found.id;
+    }
+
+    const attendanceRecords = cachedAttendanceRef.current || [];
+    let count = 0;
+    const daysSet = new Set<string>();
+
+    attendanceRecords.forEach(rec => {
+      if (!rec || rec.isNoAbsence || !Array.isArray(rec.absent)) return;
+      const isAbsent = rec.absent.some(id => {
+        if (!id || id === "no-absence") return false;
+        if (matchedStudentId && (id === matchedStudentId || id.toLowerCase() === matchedStudentId.toLowerCase())) return true;
+        if (rawId && (id === rawId || id.toLowerCase() === rawId.toLowerCase())) return true;
+        if (rawName && (id === rawName || rec.studentNames?.[id] === rawName)) return true;
+        if (normName) {
+          if (normalizeArabic(id).replace(/\s+/g, ' ') === normName) return true;
+          if (rec.studentNames?.[id] && normalizeArabic(rec.studentNames[id]).replace(/\s+/g, ' ') === normName) return true;
+        }
+        return false;
+      });
+
+      if (isAbsent) {
+        count++;
+        if (rec.date) daysSet.add(rec.date);
+      }
+    });
+
+    return {
+      count,
+      daysCount: daysSet.size
+    };
+  };
+
   const computeStatistics = (
     attendance: AttendanceRecord[], 
     behaviors: BehaviorRecord[], 
@@ -1596,6 +1638,7 @@ export default function AdminPanel({
           rec.absent.forEach(stId => {
             const studentName = resolveStudentName(stId, rec);
             const classInfo = resolveStudentClassInfo(stId);
+            const absStats = getStudentTotalAbsences(stId, studentName);
             const entry = {
               id: `${rec.id}-${stId}-abs`,
               recordId: rec.id,
@@ -1609,7 +1652,9 @@ export default function AdminPanel({
               teacherName: resolvedTeacherName,
               time: displayTime,
               isAbsent: true,
-              isLate: false
+              isLate: false,
+              totalAbsencesCount: Math.max(absStats.count, 1),
+              totalAbsencesDays: Math.max(absStats.daysCount, 1)
             };
 
             pushToEntriesByGrade(entry, fallbackGradeId, gradeName);
@@ -1630,6 +1675,7 @@ export default function AdminPanel({
           rec.late.forEach(stId => {
             const studentName = resolveStudentName(stId, rec);
             const classInfo = resolveStudentClassInfo(stId);
+            const absStats = getStudentTotalAbsences(stId, studentName);
             const entry = {
               id: `${rec.id}-${stId}-late`,
               recordId: rec.id,
@@ -1643,7 +1689,9 @@ export default function AdminPanel({
               teacherName: resolvedTeacherName,
               time: displayTime,
               isAbsent: false,
-              isLate: true
+              isLate: true,
+              totalAbsencesCount: absStats.count,
+              totalAbsencesDays: absStats.daysCount
             };
 
             pushToEntriesByGrade(entry, fallbackGradeId, gradeName);
@@ -3362,6 +3410,27 @@ export default function AdminPanel({
                   return true;
                 });
 
+                // Count occurrences across periods for today and ensure totalAbsencesCount is accurate
+                const studentDayOccurrences = new Map<string, number>();
+                rawGradeEntries.forEach((e: any) => {
+                  if (!e.isNoAbsenceDummy) {
+                    const cKey = getCanonicalStudentKey(e);
+                    studentDayOccurrences.set(cKey, (studentDayOccurrences.get(cKey) || 0) + 1);
+                  }
+                });
+
+                displayEntries.forEach((e: any) => {
+                  if (!e.isNoAbsenceDummy) {
+                    const cKey = getCanonicalStudentKey(e);
+                    e.occurrences = studentDayOccurrences.get(cKey) || 1;
+                    if (!e.totalAbsencesCount) {
+                      const stats = getStudentTotalAbsences(e.studentId, e.studentName);
+                      e.totalAbsencesCount = Math.max(stats.count, 1);
+                      e.totalAbsencesDays = Math.max(stats.daysCount, 1);
+                    }
+                  }
+                });
+
                 // Sort display entries: First by Period (الحصة), Second by Class (الفصل), Third by Student Name (اسم الطالب)
                 displayEntries.sort((a: any, b: any) => {
                   const pNumAStr = getPeriodNum(a.periodCode || a.period || "");
@@ -3521,10 +3590,23 @@ export default function AdminPanel({
                                           </span>
                                         </div>
                                       ) : (
-                                        <div className="flex items-center gap-1 min-w-0">
+                                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                                           <span className="font-bold text-slate-900 text-[10px] truncate block" title={entry.studentName}>
                                             {entry.studentName}
                                           </span>
+                                          {(() => {
+                                            const totalCount = entry.totalAbsencesCount || getStudentTotalAbsences(entry.studentId, entry.studentName).count || 1;
+                                            const totalDays = entry.totalAbsencesDays || getStudentTotalAbsences(entry.studentId, entry.studentName).daysCount || 1;
+                                            return (
+                                              <span 
+                                                className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/90 text-[8.5px] font-black px-1.5 py-0.2 rounded shrink-0 shadow-3xs flex items-center gap-0.5 transition-colors cursor-default" 
+                                                title={`إجمالي عدد مرات الغياب للطالب: ${totalCount} ${totalCount === 1 ? "مرة" : totalCount === 2 ? "مرتان" : "مرات"}${totalDays > 0 ? ` (${totalDays} ${totalDays === 1 ? "يوم" : totalDays === 2 ? "يومان" : "أيام"})` : ""}`}
+                                              >
+                                                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
+                                                <span className="whitespace-nowrap">غـ: {totalCount}</span>
+                                              </span>
+                                            );
+                                          })()}
                                           {entry.occurrences > 1 && (
                                             <span className="bg-blue-100 text-blue-800 text-[9px] font-black px-1 py-0.2 rounded shrink-0" title={`مسجل في ${entry.occurrences} حصص`}>
                                               ({entry.occurrences} حصص)
@@ -3628,8 +3710,21 @@ export default function AdminPanel({
                                         <span>{entry.studentName}</span>
                                       </div>
                                     ) : (
-                                      <div className="flex items-center gap-1.5">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
                                         <span>{entry.studentName}</span>
+                                        {(() => {
+                                          const totalCount = entry.totalAbsencesCount || getStudentTotalAbsences(entry.studentId, entry.studentName).count || 1;
+                                          const totalDays = entry.totalAbsencesDays || getStudentTotalAbsences(entry.studentId, entry.studentName).daysCount || 1;
+                                          return (
+                                            <span 
+                                              className="bg-rose-50 text-rose-700 border border-rose-200/90 text-[9px] font-black px-1.5 py-0.2 rounded shrink-0 shadow-3xs flex items-center gap-1"
+                                              title={`إجمالي عدد مرات الغياب للطالب: ${totalCount} ${totalCount === 1 ? "مرة" : totalCount === 2 ? "مرتان" : "مرات"}${totalDays > 0 ? ` (${totalDays} ${totalDays === 1 ? "يوم" : totalDays === 2 ? "يومان" : "أيام"})` : ""}`}
+                                            >
+                                              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
+                                              <span className="whitespace-nowrap">غـ: {totalCount}</span>
+                                            </span>
+                                          );
+                                        })()}
                                         {entry.occurrences > 1 && (
                                           <span className="bg-blue-100 text-blue-800 text-[9px] font-black px-1.5 py-0.2 rounded">
                                             ({entry.occurrences} حصص)
@@ -4163,7 +4258,24 @@ export default function AdminPanel({
                       searchAttendanceResult.map((entry, index) => (
                         <tr key={entry.id} className="hover:bg-slate-50/50 transition">
                           <td className="py-2 px-3 font-bold text-slate-400 text-xs">{index + 1}</td>
-                          <td className="py-2 px-3 font-bold text-slate-800 text-[11px]">{entry.studentName}</td>
+                          <td className="py-2 px-3 font-bold text-slate-800 text-[11px]">
+                            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                              <span>{entry.studentName}</span>
+                              {entry.status === "غائب" && (() => {
+                                const absData = getStudentTotalAbsences(entry.studentId, entry.studentName);
+                                const totalCount = Math.max(absData.count, 1);
+                                return (
+                                  <span 
+                                    className="bg-rose-50 text-rose-700 border border-rose-200/90 text-[8.5px] font-black px-1.5 py-0.2 rounded shrink-0 shadow-3xs flex items-center gap-0.5"
+                                    title={`إجمالي عدد مرات الغياب للطالب: ${totalCount} مرات`}
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>
+                                    <span className="whitespace-nowrap">غـ: {totalCount}</span>
+                                  </span>
+                                );
+                              })()}
+                            </div>
+                          </td>
                           <td className="py-2 px-2">
                             <span className={`px-2 py-0.5 rounded-full text-3xs font-black ${
                               entry.status === "غائب" ? "bg-rose-50 text-rose-600 border border-rose-100" : "bg-amber-50 text-amber-600 border border-amber-100"

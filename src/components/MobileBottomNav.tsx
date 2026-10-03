@@ -83,21 +83,21 @@ export default function MobileBottomNav({
         </span>
       </button>
 
-      {/* 3. Morning Delay Tab (التأخر - معطل حالياً قريباً) */}
+      {/* 3. Morning Delay Tab (التأخر) */}
       <button
         type="button"
         id="nav-btn-delay"
-        disabled={true}
-        title="قسم تسجيل التأخر الصباحي معطل حالياً - قريباً"
-        className="flex flex-col items-center justify-center flex-1 py-1 px-1 rounded-xl cursor-not-allowed select-none opacity-60 relative"
+        onClick={() => onNavigate("morning-delay")}
+        className={`flex flex-col items-center justify-center flex-1 py-1 px-1 rounded-xl transition-all cursor-pointer select-none active:scale-95 ${
+          isDelayActive
+            ? "text-amber-600 font-extrabold"
+            : "text-slate-500 hover:text-slate-700 font-bold"
+        }`}
       >
-        <span className="absolute -top-1 bg-amber-500 text-white text-[8px] font-black px-1 rounded shadow-3xs">
-          قريباً
-        </span>
-        <div className="relative mb-0.5 mt-0.5">
-          <Clock className="w-5 h-5 text-slate-400" />
+        <div className="relative mb-0.5">
+          <Clock className={`w-5 h-5 ${isDelayActive ? "text-amber-600 stroke-[2.5]" : "text-amber-500"}`} />
         </div>
-        <span className="text-[10px] tracking-tight text-slate-500 font-bold">
+        <span className={`text-[11px] tracking-tight ${isDelayActive ? "text-amber-600 font-black" : "text-slate-600 font-bold"}`}>
           التأخر
         </span>
       </button>

@@ -9,7 +9,8 @@ import {
   saveBehaviorRecord,
   getAllBehaviorRecords,
   subscribeToAttendanceRecord,
-  subscribeToBehaviorRecords
+  subscribeToBehaviorRecords,
+  getAllAttendanceRecords
 } from "../dbService";
 import { 
   Users, 
@@ -146,6 +147,85 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
   useEffect(() => {
     loadAllBehaviorsData();
   }, [selectedGradeId, selectedClassId]);
+
+  // Normalize Arabic text for reliable string matching
+  const normalizeArabic = (str: string): string => {
+    if (!str) return "";
+    return str
+      .replace(/[أإآء]/g, "ا")
+      .replace(/[ة]/g, "ه")
+      .replace(/[ى]/g, "ي")
+      .replace(/[\u064B-\u065F\u0670]/g, "")
+      .trim()
+      .toLowerCase();
+  };
+
+  // Student cumulative absences count state and loader
+  const [studentAbsencesMap, setStudentAbsencesMap] = useState<Record<string, { count: number; daysCount: number }>>({});
+
+  const loadAllAbsencesData = async () => {
+    try {
+      const records = await getAllAttendanceRecords();
+      const absMap: Record<string, { count: number; days: Set<string> }> = {};
+
+      const recordStudentAbs = (key: string, date: string) => {
+        if (!key || key === "no-absence") return;
+        if (!absMap[key]) absMap[key] = { count: 0, days: new Set() };
+        absMap[key].count += 1;
+        if (date) absMap[key].days.add(date);
+      };
+
+      records.forEach(rec => {
+        if (!rec || rec.isNoAbsence || !Array.isArray(rec.absent)) return;
+        rec.absent.forEach(id => {
+          if (!id || id === "no-absence") return;
+          recordStudentAbs(id, rec.date);
+          recordStudentAbs(id.toLowerCase(), rec.date);
+
+          // Find student in propStudents to also index by name and normalized name
+          const st = propStudents?.find(s => s && (s.id === id || s.id?.toLowerCase() === id.toLowerCase() || s.name === id));
+          if (st && st.name) {
+            recordStudentAbs(st.id, rec.date);
+            recordStudentAbs(st.name, rec.date);
+            recordStudentAbs(normalizeArabic(st.name), rec.date);
+          } else {
+            recordStudentAbs(normalizeArabic(id), rec.date);
+          }
+        });
+      });
+
+      const res: Record<string, { count: number; daysCount: number }> = {};
+      Object.keys(absMap).forEach(k => {
+        res[k] = { count: absMap[k].count, daysCount: absMap[k].days.size };
+      });
+      setStudentAbsencesMap(res);
+    } catch (error) {
+      console.error("Error loading absences count:", error);
+    }
+  };
+
+  useEffect(() => {
+    loadAllAbsencesData();
+    const handleSync = () => {
+      loadAllAbsencesData();
+    };
+    window.addEventListener("school_data_synced", handleSync);
+    return () => {
+      window.removeEventListener("school_data_synced", handleSync);
+    };
+  }, [propStudents]);
+
+  const getStudentAbsenceCount = (studentId: string, studentName: string): number => {
+    const rawId = (studentId || "").trim();
+    const rawName = (studentName || "").trim();
+    const normName = normalizeArabic(rawName);
+
+    if (rawId && studentAbsencesMap[rawId]) return studentAbsencesMap[rawId].count;
+    if (rawId && studentAbsencesMap[rawId.toLowerCase()]) return studentAbsencesMap[rawId.toLowerCase()].count;
+    if (normName && studentAbsencesMap[normName]) return studentAbsencesMap[normName].count;
+    if (rawName && studentAbsencesMap[rawName]) return studentAbsencesMap[rawName].count;
+    return 0;
+  };
 
   // Day Formatting in Arabic
   const [formattedDate, setFormattedDate] = useState<string>("");
@@ -456,6 +536,7 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
 
       setSaveStatus({ type: "success", message: "تم حفظ وتوثيق الغياب بنجاح! 💾" });
       setSavedAbsentIds(currentAbsent);
+      loadAllAbsencesData();
       setHasRecord(true);
       setIsDirty(false);
       isDirtyRef.current = false;
@@ -950,13 +1031,29 @@ export default function TeacherPortal({ grades, classes, teachers, students: pro
                       onClick={() => toggleAttendance(student.id)}
                       className={`flex items-center justify-between px-4 py-3.5 sm:py-3.5 min-h-[48px] cursor-pointer transition select-none active:scale-[0.99] active:bg-slate-100/80 touch-manipulation ${rowBg}`}
                     >
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
                         <span className="text-xs font-black w-7 h-7 flex items-center justify-center rounded-full bg-slate-100 text-slate-700 shrink-0">
                           {idx + 1}
                         </span>
                         <span className="text-xs sm:text-sm font-bold text-slate-800">
                           {student.name}
                         </span>
+                        {(() => {
+                          const absCount = getStudentAbsenceCount(student.id, student.name);
+                          return (
+                            <span 
+                              className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-md shadow-3xs flex items-center gap-1 border transition-colors shrink-0 ${
+                                absCount > 0 
+                                  ? "bg-rose-50 text-rose-700 border-rose-200/90" 
+                                  : "bg-emerald-50 text-emerald-700 border-emerald-200/80"
+                              }`}
+                              title={`إجمالي عدد مرات الغياب للطالب: ${absCount} ${absCount === 1 ? "مرة" : absCount === 2 ? "مرتان" : "مرات"}`}
+                            >
+                              {absCount > 0 && <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"></span>}
+                              <span className="whitespace-nowrap">غـ: {absCount}</span>
+                            </span>
+                          );
+                        })()}
                       </div>
 
                       <div className="transition-all duration-200">
